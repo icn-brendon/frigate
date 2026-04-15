@@ -14,6 +14,16 @@ RECORD_DIR = f"{BASE_DIR}/recordings"
 TRIGGER_DIR = f"{CLIPS_DIR}/triggers"
 BIRDSEYE_PIPE = "/tmp/cache/birdseye"
 CACHE_DIR = "/tmp/cache"
+# Dedicated tmpfs for the mainstream event ring buffer. When the compose
+# file mounts /tmp/event_cache as its own tmpfs, the mainstream ring
+# buffer cannot evict substream record segments by filling the shared
+# /tmp/cache mount (M1). When the dedicated mount is absent (dev / unit
+# tests), fall back to /tmp/cache/event_buffer so behaviour is unchanged.
+EVENT_BUFFER_BASE_DIR = (
+    "/tmp/event_cache"
+    if os.path.isdir("/tmp/event_cache")
+    else os.path.join(CACHE_DIR, "event_buffer")
+)
 REPLAY_CAMERA_PREFIX = "_replay_"
 REPLAY_DIR = os.path.join(CACHE_DIR, "replay")
 PLUS_ENV_VAR = "PLUS_API_KEY"

@@ -114,7 +114,17 @@ class RecordingCleanup(threading.Thread):
         config: CameraConfig,
         reviews: list[Any],
     ) -> set[Path]:
-        """Delete recordings for existing camera based on retention config."""
+        """Delete recordings for existing camera based on retention config.
+
+        This pass governs *substream* segments only (``stream_quality == 'sub'``
+        or NULL for legacy rows pre-migration 036). Main-stream event segments
+        are governed independently by ``expire_existing_camera_main_recordings``
+        because they are written by a separate ffmpeg process, on a different
+        keyframe grid, and live at a separate on-disk path
+        (``MM.SS_main.mp4`` vs ``MM.SS.mp4``). Mixing the two passes would
+        cause main segments to be deleted by sub-substream retention rules
+        (see DEVIL B1).
+        """
         # Get the timestamp for cutoff of retained days
 
         # Get recordings to check for expiration
@@ -130,6 +140,10 @@ class RecordingCleanup(threading.Thread):
             )
             .where(
                 (Recordings.camera == config.name)
+                & (
+                    (Recordings.stream_quality == "sub")
+                    | (Recordings.stream_quality.is_null(True))
+                )
                 & (
                     (
                         (Recordings.end_time < continuous_expire_date)
@@ -280,6 +294,102 @@ class RecordingCleanup(threading.Thread):
 
         return maybe_empty_dirs
 
+    def expire_existing_camera_main_recordings(
+        self,
+        config: CameraConfig,
+        now: datetime.datetime,
+    ) -> set[Path]:
+        """Expire main-stream event-recording segments using
+        ``record.event_recording.retain.{days,mode}``.
+
+        Falls back to ``record.continuous.retain`` (sub) values only when
+        ``event_recording.retain`` is unset / has zero days configured. We
+        explicitly do NOT fall back to "never delete" — a misconfiguration
+        should not silently fill the disk.
+        """
+        event_retain = config.record.event_recording.retain
+        retain_days = (
+            event_retain.days
+            if event_retain is not None and event_retain.days > 0
+            else max(config.record.continuous.days, config.record.motion.days)
+        )
+
+        # If both event retention and the fallback are zero, treat as "do not
+        # touch main segments here" rather than mass-delete (the caller still
+        # has the deleted-cameras pass for orphaned rows).
+        if retain_days <= 0:
+            return set()
+
+        retain_mode = (
+            event_retain.mode
+            if event_retain is not None and event_retain.mode is not None
+            else RetainModeEnum.all
+        )
+        expire_date = (
+            now - datetime.timedelta(days=retain_days)
+        ).timestamp()
+
+        recordings = (
+            Recordings.select(
+                Recordings.id,
+                Recordings.start_time,
+                Recordings.end_time,
+                Recordings.path,
+                Recordings.objects,
+                Recordings.motion,
+                Recordings.dBFS,
+            )
+            .where(
+                (Recordings.camera == config.name)
+                & (Recordings.stream_quality == "main")
+                & (Recordings.end_time < expire_date)
+            )
+            .order_by(Recordings.start_time)
+            .namedtuples()
+            .iterator()
+        )
+
+        maybe_empty_dirs: set[Path] = set()
+        deleted_recordings: set[str] = set()
+
+        for recording in recordings:
+            # Honour the configured retain mode for main-stream segments. If
+            # the user picked motion/active_objects, drop main segments that
+            # had neither (note: per-segment motion/object stats for main
+            # come from the substream's stats window — they may legitimately
+            # be zero on a misaligned segment, which is acceptable here
+            # because we're past the configured retention horizon).
+            if (
+                retain_mode == RetainModeEnum.motion
+                and recording.motion == 0
+                and recording.objects == 0
+                and recording.dBFS == 0
+            ) or (
+                retain_mode == RetainModeEnum.active_objects
+                and recording.objects == 0
+            ) or retain_mode == RetainModeEnum.all:
+                recording_path = Path(recording.path)
+                # Defence in depth: only ever unlink files this pass owns.
+                # Main segments are written as MM.SS_main.mp4. If we somehow
+                # see a path that does not match this naming convention,
+                # leave the on-disk file alone but still drop the row.
+                if recording_path.stem.endswith("_main"):
+                    recording_path.unlink(missing_ok=True)
+                    maybe_empty_dirs.add(recording_path.parent)
+                deleted_recordings.add(recording.id)
+
+        logger.debug(
+            f"Expiring {len(deleted_recordings)} main-stream recordings"
+        )
+        max_deletes = 100000
+        deleted_recordings_list = list(deleted_recordings)
+        for i in range(0, len(deleted_recordings_list), max_deletes):
+            Recordings.delete().where(
+                Recordings.id << deleted_recordings_list[i : i + max_deletes]
+            ).execute()
+
+        return maybe_empty_dirs
+
     def expire_recordings(self) -> set[Path]:
         """Delete recordings based on retention config."""
         logger.debug("Start expire recordings.")
@@ -361,6 +471,11 @@ class RecordingCleanup(threading.Thread):
 
             maybe_empty_dirs |= self.expire_existing_camera_recordings(
                 continuous_expire_date, motion_expire_date, config, reviews
+            )
+            # Main-stream event segments are expired independently using the
+            # event_recording retention config (B1).
+            maybe_empty_dirs |= self.expire_existing_camera_main_recordings(
+                config, now
             )
             logger.debug(f"End camera: {camera}.")
 

@@ -78,11 +78,18 @@ class EventRecordingConfig(FrigateBaseModel):
         description="Enable recording from the main stream during motion/detection events.",
     )
     pre_capture: int = Field(
-        default=5,
+        default=15,
         ge=0,
         le=MAX_PRE_CAPTURE,
         title="Pre-capture seconds",
-        description="Number of seconds before the event to include in the main stream recording.",
+        description=(
+            "Number of seconds before the event to include in the main stream "
+            "recording. Implemented as a ring buffer: the mainstream ffmpeg "
+            "process runs continuously writing short segments into a tmpfs "
+            "buffer, and only the last pre_capture seconds are retained when "
+            "no event is active. On detection trigger the buffered segments "
+            "are promoted to persistent storage."
+        ),
     )
     post_capture: int = Field(
         default=10,

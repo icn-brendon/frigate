@@ -152,18 +152,34 @@ export function RecordingView({
 
   const [streamQuality, setStreamQuality] = useState<StreamQuality>("sub");
 
-  // determine main stream availability based on review items (motion/detection events)
+  // Main stream availability is driven by the backend record of which time
+  // ranges have a main-stream segment on disk (populated by the event
+  // recorder), not by review items. The endpoint returns a list of
+  // {start_time, end_time} ranges within [after, before].
+  // Server response is {ranges: [...], truncated: bool}. The endpoint
+  // rejects windows wider than 7 days with HTTP 400; the per-day timeline
+  // span is always well under that cap.
+  const { data: mainAvailabilityResponse } = useSWR<{
+    ranges: { start_time: number; end_time: number }[];
+    truncated: boolean;
+  }>([
+    `${mainCamera}/recordings/main_availability`,
+    {
+      after: timeRange.after,
+      before: timeRange.before,
+    },
+  ]);
+
   const getMainStreamAvailability = useCallback(
     (timestamp: number): boolean => {
-      if (!mainCameraReviewItems.length) return false;
+      const ranges = mainAvailabilityResponse?.ranges;
+      if (!ranges || ranges.length === 0) return false;
 
-      return mainCameraReviewItems.some(
-        (item) =>
-          timestamp >= item.start_time &&
-          timestamp <= (item.end_time ?? item.start_time),
+      return ranges.some(
+        (r) => timestamp >= r.start_time && timestamp <= r.end_time,
       );
     },
-    [mainCameraReviewItems],
+    [mainAvailabilityResponse],
   );
 
   // timeline

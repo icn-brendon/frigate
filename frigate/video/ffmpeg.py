@@ -459,6 +459,15 @@ class CameraWatchdog(threading.Thread):
                         p["latest_segment_time"] = self.latest_cache_segment_time
 
                 if poll is None:
+                    # Process is alive; if it has been alive long enough,
+                    # reset the backoff so a later flap starts at 1s.
+                    if (
+                        "_backoff_started_at" in p
+                        and now - p["_backoff_started_at"] >= 300
+                    ):
+                        p["_backoff_seconds"] = 0
+                        p["_backoff_started_at"] = 0
+                        p["_backoff_capped_logged"] = False
                     continue
 
                 for role in p["roles"]:
@@ -467,6 +476,51 @@ class CameraWatchdog(threading.Thread):
                     )
 
                 p["logpipe"].dump()
+
+                # Exponential backoff for crash-loop containment (M3).
+                # The record_events role is most prone to flap on bad
+                # mainstream credentials; apply backoff to all
+                # record-only inputs (no detect role) so we don't slow
+                # down a real detect respawn.
+                roles_set = {
+                    role.value if hasattr(role, "value") else role
+                    for role in p["roles"]
+                }
+                eligible_for_backoff = (
+                    "record_events" in roles_set or "record" in roles_set
+                ) and "detect" not in roles_set
+
+                if eligible_for_backoff:
+                    last = p.get("_last_restart_at", 0)
+                    cur_backoff = p.get("_backoff_seconds", 0)
+                    # If we have not yet waited the current backoff, skip
+                    # this restart attempt this tick.
+                    if cur_backoff > 0 and (now - last) < cur_backoff:
+                        continue
+
+                    next_backoff = (
+                        1 if cur_backoff <= 0 else min(cur_backoff * 2, 60)
+                    )
+                    p["_backoff_seconds"] = next_backoff
+                    p["_last_restart_at"] = now
+                    p["_backoff_started_at"] = now
+
+                    if next_backoff >= 60:
+                        if not p.get("_backoff_capped_logged", False):
+                            self.logger.error(
+                                f"ffmpeg for {self.config.name} "
+                                f"({sorted(roles_set)}) has been crash-looping; "
+                                "restart backoff is at the 60s cap. Check "
+                                "input URL / credentials / network."
+                            )
+                            p["_backoff_capped_logged"] = True
+                    else:
+                        self.logger.warning(
+                            f"ffmpeg for {self.config.name} "
+                            f"({sorted(roles_set)}) exited; restarting after "
+                            f"{next_backoff}s backoff."
+                        )
+
                 p["process"] = start_or_restart_ffmpeg(
                     p["cmd"], self.logger, p["logpipe"], ffmpeg_process=p["process"]
                 )

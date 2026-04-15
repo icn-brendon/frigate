@@ -1,48 +1,78 @@
-"""Record main stream segments during motion/detection events."""
+"""Record main stream segments during motion/detection events.
+
+The mainstream ffmpeg process for a camera with the ``record_events`` role
+runs **continuously**, writing short (~2 s) segments into a per-camera ring
+buffer directory under ``CACHE_DIR/event_buffer/{camera}/``. The
+``EventRecorder`` thread:
+
+* drains those segments and, when no event is active, prunes anything older
+  than ``record.event_recording.pre_capture`` seconds (the ring-buffer
+  retention window);
+* when a detection trigger fires, **promotes** every still-buffered segment
+  (i.e. up to ``pre_capture`` seconds of pre-roll) into the flat
+  ``CACHE_DIR`` as ``camera@main@{ts}.mp4`` files, where the
+  ``RecordingMaintainer`` picks them up like any other main segment;
+* keeps promoting freshly produced segments while activity continues, and
+  for ``post_capture`` seconds after the trigger clears;
+* on clear, returns to ring-buffer-only mode (continued pruning).
+
+This replaces the previous reactive design that started/stopped the
+mainstream ffmpeg process on every event — the reactive version could not
+provide any meaningful ``pre_capture`` because the process did not exist
+before the trigger arrived.
+"""
 
 import logging
-import subprocess as sp
+import os
+import shutil
 import threading
 import time
 from multiprocessing.synchronize import Event as MpEvent
-from typing import Any, Optional
+from pathlib import Path
+from typing import Optional
 
 from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeEnum
 from frigate.config import CameraConfig, FrigateConfig
-from frigate.const import CACHE_DIR, CACHE_SEGMENT_FORMAT, FAST_QUEUE_TIMEOUT
-from frigate.log import LogPipe
-from frigate.util.ffmpeg import start_or_restart_ffmpeg, stop_ffmpeg
+from frigate.const import (
+    CACHE_DIR,
+    CACHE_SEGMENT_FORMAT,
+    EVENT_BUFFER_BASE_DIR,
+    FAST_QUEUE_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
 
+def _camera_buffer_dir(camera: str) -> str:
+    return os.path.join(EVENT_BUFFER_BASE_DIR, camera)
+
+
 class CameraRecordingState:
-    """Tracks the recording state for a single camera."""
+    """Tracks the event-recording state for a single camera."""
 
     def __init__(self) -> None:
-        self.is_recording: bool = False
-        self.ffmpeg_process: Optional[sp.Popen[Any]] = None
+        # Wall-clock time of the most recent meaningful detection. Used to
+        # decide when post_capture has elapsed.
         self.last_activity_time: float = 0.0
-        self.recording_start_time: float = 0.0
-        self.logpipe: Optional[LogPipe] = None
+        # True between trigger arrival and post_capture timeout.
+        self.is_active: bool = False
+        # Set of buffer-directory file paths that have already been
+        # promoted to CACHE_DIR (so we never promote the same file twice).
+        self.promoted_paths: set[str] = set()
 
 
 class EventRecorder(threading.Thread):
-    """Records main stream segments during motion/detection events.
+    """Manage the per-camera ring buffers of mainstream segments and
+    promote them into the recording cache during detection events.
 
-    This thread subscribes to detection events and manages FFmpeg processes
-    that record the main stream to cache only when motion or object detections
-    are active. When no activity is detected for the configured post_capture
-    duration, the FFmpeg process is stopped, which causes go2rtc to disconnect
-    the upstream RTSP connection and save bandwidth.
-
-    Trade-off: Because the main stream FFmpeg process is started reactively
-    when the first detection arrives, the initial ~1-2 seconds of an event
-    may only have substream coverage. True pre_capture for the main stream
-    would require keeping the process running continuously, which defeats
-    the purpose of event-only recording. The substream continuous recording
-    provides coverage for this gap.
+    Note: this thread does NOT spawn or kill any ffmpeg process. The
+    mainstream ffmpeg with the ``record_events`` role is started by the
+    normal camera ffmpeg lifecycle and writes continuously into the
+    ring-buffer subdirectory.
     """
+
+    # How frequently to scan the per-camera buffer directories.
+    POLL_INTERVAL_SECONDS = 1.0
 
     def __init__(
         self,
@@ -54,6 +84,9 @@ class EventRecorder(threading.Thread):
         super().__init__(name="event_recorder", daemon=True)
         self.config = config
         self.camera_configs = camera_configs
+        # ffmpeg_cmds is retained for compatibility with the previous
+        # interface but is no longer used: ffmpeg is owned by the camera
+        # process now.
         self.ffmpeg_cmds = ffmpeg_cmds
         self.stop_event = stop_event
 
@@ -61,27 +94,38 @@ class EventRecorder(threading.Thread):
             DetectionTypeEnum.video.value
         )
 
-        # per-camera recording state
-        self.camera_states: dict[str, CameraRecordingState] = {}
+        self.camera_states: dict[str, CameraRecordingState] = {
+            camera: CameraRecordingState() for camera in camera_configs
+        }
+
+        # Ensure buffer directories exist (also created in camera config,
+        # but defensive here for restarts and tests).
         for camera in camera_configs:
-            self.camera_states[camera] = CameraRecordingState()
+            try:
+                os.makedirs(_camera_buffer_dir(camera), exist_ok=True)
+            except OSError as e:
+                logger.warning(
+                    f"Could not create event buffer dir for {camera}: {e}"
+                )
+
+    # ---------------------------- main loop ----------------------------
 
     def run(self) -> None:
-        """Main loop: consume detection events and manage FFmpeg processes."""
         while not self.stop_event.is_set():
             self._process_detection_events()
-            self._check_timeouts()
-            self._check_ffmpeg_health()
+            self._tick_buffers()
 
-            if self.stop_event.wait(0.5):
+            if self.stop_event.wait(self.POLL_INTERVAL_SECONDS):
                 break
 
-        self._stop_all_recordings()
         self.detection_subscriber.stop()
         logger.info("Exiting event recorder...")
 
+    # ----------------------- detection ingestion -----------------------
+
     def _process_detection_events(self) -> None:
-        """Drain all pending detection events and update activity times."""
+        """Drain pending detection events, update activity timestamps and
+        flip cameras into the ``is_active`` state on a fresh trigger."""
         while True:
             result = self.detection_subscriber.check_for_update(
                 timeout=FAST_QUEUE_TIMEOUT
@@ -95,159 +139,188 @@ class EventRecorder(threading.Thread):
             if not topic or not data:
                 break
 
-            (
-                camera,
-                _,
-                frame_time,
-                current_tracked_objects,
-                motion_boxes,
-                regions,
-            ) = data
+            try:
+                (
+                    camera,
+                    _,
+                    _frame_time,
+                    current_tracked_objects,
+                    motion_boxes,
+                    _regions,
+                ) = data
+            except (TypeError, ValueError):
+                logger.debug("Ignoring detection event with unexpected shape")
+                continue
 
             if camera not in self.camera_states:
                 continue
 
-            # determine if there is meaningful activity in this frame
             has_motion = len(motion_boxes) > 0
-            has_objects = len(
-                [
-                    o
-                    for o in current_tracked_objects
-                    if not o["false_positive"] and o["motionless_count"] == 0
-                ]
-            ) > 0
+            has_objects = (
+                len(
+                    [
+                        o
+                        for o in current_tracked_objects
+                        if not o["false_positive"]
+                    ]
+                )
+                > 0
+            )
 
             if has_motion or has_objects:
                 state = self.camera_states[camera]
-                # use wall clock time for timeout comparison consistency
                 state.last_activity_time = time.time()
+                if not state.is_active:
+                    state.is_active = True
+                    logger.info(
+                        f"Event trigger for {camera}: promoting up to "
+                        f"{self.camera_configs[camera].record.event_recording.pre_capture}s "
+                        "of mainstream ring buffer"
+                    )
 
-                if not state.is_recording:
-                    self._start_recording(camera)
+    # ------------------------ buffer maintenance -----------------------
 
-    def _start_recording(self, camera: str) -> None:
-        """Start FFmpeg process for this camera's main stream."""
-        state = self.camera_states[camera]
-
-        if camera not in self.ffmpeg_cmds:
-            logger.error(
-                f"No FFmpeg command configured for event recording on {camera}"
-            )
-            return
-
-        state.logpipe = LogPipe(f"ffmpeg.{camera}.event_record")
-        state.ffmpeg_process = start_or_restart_ffmpeg(
-            self.ffmpeg_cmds[camera],
-            logger,
-            state.logpipe,
-        )
-        state.is_recording = True
-        state.recording_start_time = time.time()
-
-        logger.info(
-            f"Started main stream event recording for {camera} (pid {state.ffmpeg_process.pid})"
-        )
-
-    def _stop_recording(self, camera: str) -> None:
-        """Stop FFmpeg process for this camera's main stream."""
-        state = self.camera_states[camera]
-
-        if state.ffmpeg_process is not None:
-            stop_ffmpeg(state.ffmpeg_process, logger)
-            state.ffmpeg_process = None
-
-        duration = time.time() - state.recording_start_time
-        logger.info(
-            f"Stopped main stream event recording for {camera} "
-            f"(ran for {duration:.1f}s)"
-        )
-
-        if state.logpipe is not None:
-            state.logpipe.close()
-            state.logpipe = None
-
-        state.is_recording = False
-        state.recording_start_time = 0.0
-
-    def _check_timeouts(self) -> None:
-        """Stop recording for cameras where post_capture has elapsed."""
+    def _tick_buffers(self) -> None:
+        """For every camera, either prune the ring buffer to ``pre_capture``
+        seconds (idle) or promote new segments to the persistent cache
+        (active). Also handles transitioning out of the active state once
+        ``post_capture`` seconds have elapsed since the last trigger."""
         now = time.time()
 
         for camera, state in self.camera_states.items():
-            if not state.is_recording:
+            cfg = self.camera_configs[camera].record.event_recording
+            pre_capture = cfg.pre_capture
+            post_capture = cfg.post_capture
+
+            buffer_dir = _camera_buffer_dir(camera)
+            if not os.path.isdir(buffer_dir):
                 continue
 
-            if state.last_activity_time <= 0:
-                continue
+            # Build a sorted list of (mtime, path) for files in the buffer.
+            entries: list[tuple[float, str]] = []
+            for name in os.listdir(buffer_dir):
+                if not name.endswith(".mp4"):
+                    continue
+                full = os.path.join(buffer_dir, name)
+                try:
+                    entries.append((os.path.getmtime(full), full))
+                except OSError:
+                    continue
+            entries.sort()
 
-            post_capture = (
-                self.camera_configs[camera].record.event_recording.post_capture
+            # Determine whether we are still in the active window.
+            if state.is_active:
+                if (
+                    state.last_activity_time > 0
+                    and (now - state.last_activity_time) >= post_capture
+                ):
+                    state.is_active = False
+                    state.promoted_paths.clear()
+                    logger.info(
+                        f"Post-capture window ({post_capture}s) elapsed for "
+                        f"{camera}; returning to ring-buffer-only mode"
+                    )
+
+            if state.is_active:
+                # Promote everything currently in the buffer that we have
+                # not already promoted. We skip the newest file because
+                # ffmpeg may still be writing to it.
+                promotable = entries[:-1] if len(entries) > 1 else []
+                for _mtime, src_path in promotable:
+                    if src_path in state.promoted_paths:
+                        continue
+                    self._promote_segment(camera, src_path, state)
+            else:
+                # Idle: prune anything older than the pre_capture window.
+                cutoff = now - max(0, pre_capture)
+                # Always keep at least the most recent file, even if it is
+                # older than the cutoff (otherwise on a very low-fps stream
+                # we could end up with an empty buffer right when an event
+                # arrives).
+                for _mtime, path in entries[:-1] if entries else []:
+                    if _mtime < cutoff:
+                        try:
+                            Path(path).unlink(missing_ok=True)
+                        except OSError as e:
+                            logger.debug(
+                                f"Failed to prune buffer segment {path}: {e}"
+                            )
+
+    def _promote_segment(
+        self, camera: str, src_path: str, state: CameraRecordingState
+    ) -> None:
+        """Move a buffered segment into the flat CACHE_DIR with the
+        ``camera@main@ts.mp4`` naming convention so the maintainer treats
+        it as a persistent main-stream segment.
+
+        The timestamp is parsed from the buffer filename itself (which
+        ffmpeg produced with ``-strftime 1`` using CACHE_SEGMENT_FORMAT),
+        NOT from ``os.path.getmtime``. mtime is the write-completion time
+        and runs ~segment-duration seconds behind the actual start-of-
+        content, which caused ``vod_ts`` to fall back to SD for the first
+        ~2 s of every event (M8).
+        """
+        # Buffer filename is "<CACHE_SEGMENT_FORMAT>.mp4" i.e. the base
+        # name IS the start timestamp. Use it verbatim so the maintainer
+        # ingests with a start_time matching the segment content, not the
+        # file-system write completion time.
+        base = os.path.splitext(os.path.basename(src_path))[0]
+        # Validate by round-tripping through the configured format; if the
+        # filename isn't a valid strftime match we fall back to mtime to
+        # preserve recoverability rather than dropping the segment.
+        try:
+            import datetime as _dt
+
+            _dt.datetime.strptime(base, CACHE_SEGMENT_FORMAT)
+            ts_str = base
+        except ValueError:
+            logger.debug(
+                f"Buffer segment {src_path} has non-strftime name; "
+                "falling back to mtime for promotion timestamp"
             )
-            elapsed = now - state.last_activity_time
+            try:
+                mtime = os.path.getmtime(src_path)
+            except OSError:
+                return
+            ts_struct = time.localtime(mtime)
+            ts_str = time.strftime(
+                CACHE_SEGMENT_FORMAT.replace("%z", ""), ts_struct
+            )
+            tz_offset = time.strftime("%z", ts_struct)
+            ts_str = f"{ts_str}{tz_offset}"
 
-            if elapsed >= post_capture:
-                logger.debug(
-                    f"Post-capture timeout ({post_capture}s) reached for {camera}, "
-                    f"stopping main stream recording"
-                )
-                self._stop_recording(camera)
+        dest_path = os.path.join(CACHE_DIR, f"{camera}@main@{ts_str}.mp4")
 
-    def _check_ffmpeg_health(self) -> None:
-        """Check for crashed FFmpeg processes and restart if needed."""
-        for camera, state in self.camera_states.items():
-            if not state.is_recording or state.ffmpeg_process is None:
-                continue
-
-            poll = state.ffmpeg_process.poll()
-
-            if poll is not None:
+        # If a file with that exact timestamp already exists (clock
+        # collision on subsecond-similar segments) append a counter.
+        counter = 0
+        while os.path.exists(dest_path):
+            counter += 1
+            dest_path = os.path.join(
+                CACHE_DIR, f"{camera}@main@{ts_str}_{counter}.mp4"
+            )
+            if counter > 100:
                 logger.warning(
-                    f"FFmpeg event recording process for {camera} exited "
-                    f"unexpectedly with code {poll}"
+                    f"Refusing to promote {src_path}: too many name collisions"
                 )
+                return
 
-                if state.logpipe is not None:
-                    state.logpipe.dump()
+        try:
+            shutil.move(src_path, dest_path)
+            state.promoted_paths.add(src_path)
+            logger.debug(f"Promoted main-stream buffer segment to {dest_path}")
+        except OSError as e:
+            logger.warning(f"Failed to promote {src_path} to {dest_path}: {e}")
 
-                # only restart if there is still recent activity
-                now = time.time()
-                post_capture = (
-                    self.camera_configs[camera].record.event_recording.post_capture
-                )
+    # ------------------------------ misc -------------------------------
 
-                if (now - state.last_activity_time) < post_capture:
-                    logger.info(
-                        f"Restarting FFmpeg event recording for {camera} "
-                        f"(activity still within post_capture window)"
-                    )
-                    # create a fresh logpipe for the restarted process
-                    if state.logpipe is not None:
-                        state.logpipe.close()
-                    state.logpipe = LogPipe(f"ffmpeg.{camera}.event_record")
-                    state.ffmpeg_process = start_or_restart_ffmpeg(
-                        self.ffmpeg_cmds[camera],
-                        logger,
-                        state.logpipe,
-                    )
-                    logger.info(
-                        f"Restarted main stream event recording for {camera} "
-                        f"(pid {state.ffmpeg_process.pid})"
-                    )
-                else:
-                    # activity has expired, just clean up
-                    state.ffmpeg_process = None
-                    state.is_recording = False
-                    state.recording_start_time = 0.0
+    def _check_timeouts(self) -> None:  # pragma: no cover - retained for API compat
+        """No-op kept for backwards compatibility with prior call sites."""
+        return
 
-                    if state.logpipe is not None:
-                        state.logpipe.close()
-                        state.logpipe = None
+    def _check_ffmpeg_health(self) -> None:  # pragma: no cover - retained for API compat
+        """No-op: ffmpeg is owned by the camera process now."""
+        return
 
-    def _stop_all_recordings(self) -> None:
-        """Gracefully stop all active FFmpeg processes on shutdown."""
-        for camera, state in self.camera_states.items():
-            if state.is_recording:
-                logger.info(
-                    f"Shutting down: stopping main stream event recording for {camera}"
-                )
-                self._stop_recording(camera)
+    def _stop_all_recordings(self) -> None:  # pragma: no cover - retained for API compat
+        return

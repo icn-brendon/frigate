@@ -116,16 +116,19 @@ class RecordingMaintainer(threading.Thread):
             cache_path = os.path.join(CACHE_DIR, cache)
             basename = os.path.splitext(cache)[0]
 
-            # Parse segment name: camera@timestamp or camera@main@timestamp
+            # Parse segment name: camera@timestamp or camera@main@timestamp.
+            # Camera names may legitimately contain '@', so split off the
+            # rightmost @<timestamp> first, then check for the optional
+            # @main marker on the remaining prefix (M5).
             try:
-                parts = basename.split("@")
-                if len(parts) == 3 and parts[1] == "main":
-                    camera = parts[0]
-                    date = parts[2]
-                elif len(parts) == 2:
-                    camera = parts[0]
-                    date = parts[1]
+                if "@" not in basename:
+                    raise ValueError("Unexpected segment name format")
+                prefix, date = basename.rsplit("@", 1)
+                if prefix.endswith("@main"):
+                    camera = prefix[: -len("@main")]
                 else:
+                    camera = prefix
+                if not camera:
                     raise ValueError("Unexpected segment name format")
             except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
@@ -133,9 +136,15 @@ class RecordingMaintainer(threading.Thread):
                     self.unexpected_cache_files_logged = True
                 continue
 
-            start_time = datetime.datetime.strptime(
-                date, CACHE_SEGMENT_FORMAT
-            ).astimezone(datetime.timezone.utc)
+            try:
+                start_time = datetime.datetime.strptime(
+                    date, CACHE_SEGMENT_FORMAT
+                ).astimezone(datetime.timezone.utc)
+            except ValueError:
+                if not self.unexpected_cache_files_logged:
+                    logger.warning("Skipping unexpected files in cache")
+                    self.unexpected_cache_files_logged = True
+                continue
             if (
                 camera not in newest_cache_segments
                 or start_time > newest_cache_segments[camera]["start_time"]
@@ -185,20 +194,21 @@ class RecordingMaintainer(threading.Thread):
             cache_path = os.path.join(CACHE_DIR, cache)
             basename = os.path.splitext(cache)[0]
 
-            # Parse segment name: camera@timestamp or camera@main@timestamp
+            # Parse segment name: camera@timestamp or camera@main@timestamp.
+            # Camera names may legitimately contain '@', so split off the
+            # rightmost @<timestamp> first, then check whether the remaining
+            # prefix ends with '@main' (M5).
             stream_quality = "sub"
             try:
-                parts = basename.split("@")
-                if len(parts) == 3 and parts[1] == "main":
-                    # Main stream event segment: camera@main@timestamp
-                    camera = parts[0]
-                    date = parts[2]
+                if "@" not in basename:
+                    raise ValueError("Unexpected segment name format")
+                prefix, date = basename.rsplit("@", 1)
+                if prefix.endswith("@main"):
+                    camera = prefix[: -len("@main")]
                     stream_quality = "main"
-                elif len(parts) == 2:
-                    # Standard substream segment: camera@timestamp
-                    camera = parts[0]
-                    date = parts[1]
                 else:
+                    camera = prefix
+                if not camera:
                     raise ValueError("Unexpected segment name format")
             except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
@@ -207,9 +217,15 @@ class RecordingMaintainer(threading.Thread):
                 continue
 
             # important that start_time is utc because recordings are stored and compared in utc
-            start_time = datetime.datetime.strptime(
-                date, CACHE_SEGMENT_FORMAT
-            ).astimezone(datetime.timezone.utc)
+            try:
+                start_time = datetime.datetime.strptime(
+                    date, CACHE_SEGMENT_FORMAT
+                ).astimezone(datetime.timezone.utc)
+            except ValueError:
+                if not self.unexpected_cache_files_logged:
+                    logger.warning("Skipping unexpected files in cache")
+                    self.unexpected_cache_files_logged = True
+                continue
 
             grouped_recordings[camera].append(
                 {
@@ -399,12 +415,18 @@ class RecordingMaintainer(threading.Thread):
 
         record_config = self.config.cameras[camera].record
 
-        # Main stream event segments are always kept — they only exist during
-        # events so no further filtering is needed. Use event_recording retention.
+        # Main stream event segments honor the configured event_recording
+        # retain mode (defaulting to "all" if unset). Previously this was
+        # hard-coded to RetainModeEnum.all and ignored user configuration.
         if stream_quality == "main":
+            event_retain = record_config.event_recording.retain
+            main_retain_mode = (
+                event_retain.mode if event_retain and event_retain.mode is not None
+                else RetainModeEnum.all
+            )
             return await self.move_segment(
                 camera, start_time, end_time, duration, cache_path,
-                RetainModeEnum.all, stream_quality,
+                main_retain_mode, stream_quality,
             )
 
         highest = None

@@ -562,12 +562,23 @@ async def vod_ts(
         force_discontinuity,
         stream_quality,
     )
-    recordings = (
+    # When stream_quality == "main" we still want to fall back to substream
+    # segments for any time range that has no main coverage, so the player
+    # never stalls in gaps between events. We pull both qualities and then
+    # filter out sub segments that are fully covered by main segments below.
+    quality_filter = (
+        (Recordings.stream_quality == "main") | (Recordings.stream_quality == "sub")
+        if stream_quality == "main"
+        else (Recordings.stream_quality == stream_quality)
+    )
+
+    recordings_query = (
         Recordings.select(
             Recordings.path,
             Recordings.duration,
             Recordings.end_time,
             Recordings.start_time,
+            Recordings.stream_quality,
         )
         .where(
             Recordings.start_time.between(start_ts, end_ts)
@@ -575,10 +586,43 @@ async def vod_ts(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
-        .where(Recordings.stream_quality == stream_quality)
+        .where(quality_filter)
         .order_by(Recordings.start_time.asc())
-        .iterator()
     )
+
+    if stream_quality == "main":
+        all_rows = list(recordings_query)
+        main_rows = [r for r in all_rows if r.stream_quality == "main"]
+
+        # Build merged main coverage intervals for fast containment check.
+        main_intervals: list[list[float]] = []
+        for r in sorted(main_rows, key=lambda x: x.start_time):
+            if main_intervals and r.start_time <= main_intervals[-1][1]:
+                main_intervals[-1][1] = max(main_intervals[-1][1], r.end_time)
+            else:
+                main_intervals.append([r.start_time, r.end_time])
+
+        def _fully_covered_by_main(s: float, e: float) -> bool:
+            for ms, me in main_intervals:
+                if ms <= s and me >= e:
+                    return True
+                if ms > s:
+                    break
+            return False
+
+        filtered = []
+        for r in all_rows:
+            if r.stream_quality == "main":
+                filtered.append(r)
+            else:
+                # keep sub only where it is not fully shadowed by main coverage
+                if not _fully_covered_by_main(r.start_time, r.end_time):
+                    filtered.append(r)
+
+        filtered.sort(key=lambda x: x.start_time)
+        recordings = iter(filtered)
+    else:
+        recordings = recordings_query.iterator()
 
     clips = []
     durations = []
