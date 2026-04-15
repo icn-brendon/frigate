@@ -87,6 +87,17 @@ resort; prefer targeted `devices:` entries.
 ## Notes
 
 - Build target: `frigate` (production runtime; not `devcontainer`).
-- `/tmp/cache` is mounted as a 1GB tmpfs to match upstream guidance.
+- `/tmp/cache` is mounted as a 1 GB tmpfs to match upstream guidance and
+  hosts the substream record cache only.
+- `/tmp/event_cache` is mounted as a separate 512 MB tmpfs and hosts the
+  per-camera mainstream `event_recording` ring buffer at
+  `/tmp/event_cache/<camera>/`, retaining roughly `pre_capture` seconds
+  (default 15 s) of mainstream per camera. Isolating it from `/tmp/cache`
+  prevents a runaway high-bitrate mainstream from evicting substream
+  record segments (M1). Budget ~15 MB per camera at 8 Mbps mainstream
+  and bump the size if you run many high-bitrate cameras with event
+  recording enabled. If the `/tmp/event_cache` mount is missing (e.g.
+  running outside compose) the code falls back to
+  `/tmp/cache/event_buffer/<camera>/` automatically.
 - Port 1935 (RTMP) is exposed for legacy restream scenarios; remove if unused.
 - Port 5000 is internal unauthenticated API/UI; firewall it on the NVR.

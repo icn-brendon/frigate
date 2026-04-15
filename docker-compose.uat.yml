@@ -34,7 +34,23 @@ services:
       - type: tmpfs
         target: /tmp/cache
         tmpfs:
+          # Substream record cache only. The mainstream event-recording
+          # ring buffer is now on a dedicated tmpfs at /tmp/event_cache
+          # (M1) so a runaway high-bitrate mainstream cannot evict
+          # substream segments by filling this mount.
           size: 1000000000
+      - type: tmpfs
+        target: /tmp/event_cache
+        tmpfs:
+          # Per-camera mainstream event_recording ring buffer
+          # (subdir per camera). Holds ~pre_capture seconds of mainstream
+          # (default 15s) at ~2s segment cadence. For an 8 Mbps mainstream:
+          #     8 Mbps * 15 s / 8 = 15 MB per camera (steady state).
+          # Active events transiently spike higher (segments wait briefly
+          # before being moved to /media/frigate). 512 MB accommodates
+          # ~6 cameras with comfortable headroom; bump if you run many
+          # high-bitrate mainstream cameras.
+          size: 536870912
     ports:
       - "5000:5000"        # Internal unauthenticated UI/API (expose carefully)
       - "8971:8971"        # Authenticated UI/API
