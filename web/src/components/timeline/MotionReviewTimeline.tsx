@@ -49,6 +49,7 @@ export type MotionReviewTimelineProps = {
   isZooming: boolean;
   zoomDirection: TimelineZoomDirection;
   alwaysShowMotionLine?: boolean;
+  getMainStreamAvailability?: (timestamp: number) => boolean;
   onZoomChange?: (newZoomLevel: number) => void;
   possibleZoomLevels?: ZoomLevel[];
   currentZoomLevel?: number;
@@ -83,6 +84,7 @@ export function MotionReviewTimeline({
   isZooming,
   zoomDirection,
   alwaysShowMotionLine = false,
+  getMainStreamAvailability,
   onZoomChange,
   possibleZoomLevels,
   currentZoomLevel,
@@ -245,6 +247,7 @@ export function MotionReviewTimeline({
         motionOnly={motionOnly}
         getMotionSegmentValue={getMotionSegmentValue}
         getRecordingAvailability={getRecordingAvailability}
+        getMainStreamAvailability={getMainStreamAvailability}
         alwaysShowMotionLine={alwaysShowMotionLine}
       />
     </ReviewTimeline>

@@ -295,6 +295,27 @@ class CameraConfig(FrigateBaseModel):
                 + ffmpeg_output_args
             )
 
+        if (
+            "record_events" in ffmpeg_input.roles
+            and self.record.enabled
+            and self.record.event_recording.enabled
+        ):
+            record_events_args = get_ffmpeg_arg_list(
+                parse_preset_output_record(
+                    self.ffmpeg.output_args.record_events,
+                    self.ffmpeg.apple_compatibility,
+                )
+                or self.ffmpeg.output_args.record_events
+            )
+
+            ffmpeg_output_args = (
+                record_events_args
+                + [
+                    f"{os.path.join(CACHE_DIR, self.name)}@main@{CACHE_SEGMENT_FORMAT}.mp4"
+                ]
+                + ffmpeg_output_args
+            )
+
         # if there aren't any outputs enabled for this input
         if len(ffmpeg_output_args) == 0:
             return None

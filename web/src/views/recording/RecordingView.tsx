@@ -58,6 +58,7 @@ import {
   ASPECT_WIDE_LAYOUT,
   RecordingSegment,
   RecordingStartingPoint,
+  StreamQuality,
 } from "@/types/record";
 import { cn } from "@/lib/utils";
 import { useFullscreen } from "@/hooks/use-fullscreen";
@@ -145,6 +146,24 @@ export function RecordingView({
   const mainCameraReviewItems = useMemo(
     () => reviewItems?.filter((cam) => cam.camera == mainCamera) ?? [],
     [reviewItems, mainCamera],
+  );
+
+  // stream quality
+
+  const [streamQuality, setStreamQuality] = useState<StreamQuality>("sub");
+
+  // determine main stream availability based on review items (motion/detection events)
+  const getMainStreamAvailability = useCallback(
+    (timestamp: number): boolean => {
+      if (!mainCameraReviewItems.length) return false;
+
+      return mainCameraReviewItems.some(
+        (item) =>
+          timestamp >= item.start_time &&
+          timestamp <= (item.end_time ?? item.start_time),
+      );
+    },
+    [mainCameraReviewItems],
   );
 
   // timeline
@@ -257,6 +276,11 @@ export function RecordingView({
   const [scrubbing, setScrubbing] = useState(false);
   const [currentTime, setCurrentTime] = useState<number>(startTime);
   const [playerTime, setPlayerTime] = useState(startTime);
+
+  const mainStreamAvailableForCurrentTime = useMemo(
+    () => getMainStreamAvailability(currentTime),
+    [getMainStreamAvailability, currentTime],
+  );
 
   const updateSelectedSegment = useCallback(
     (currentTime: number, updateStartTime: boolean) => {
@@ -593,6 +617,37 @@ export function RecordingView({
             </Button>
           </div>
           <div className="flex items-center justify-end gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  className="flex items-center gap-1.5 rounded-lg"
+                  aria-label="Toggle stream quality"
+                  size="sm"
+                  variant={streamQuality === "main" ? "select" : "default"}
+                  onClick={() =>
+                    setStreamQuality((prev) =>
+                      prev === "sub" ? "main" : "sub",
+                    )
+                  }
+                >
+                  <FaVideo className="size-5 text-secondary-foreground" />
+                  <span className="text-xs font-bold">
+                    {streamQuality === "main" ? "HD" : "SD"}
+                  </span>
+                  {streamQuality === "main" &&
+                    !mainStreamAvailableForCurrentTime && (
+                      <span className="text-xs text-warning">!</span>
+                    )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {streamQuality === "main"
+                  ? mainStreamAvailableForCurrentTime
+                    ? "Playing main stream (HD)"
+                    : "Main stream selected but unavailable for current time - falling back to substream"
+                  : "Playing substream (SD) - click to switch to main stream where available"}
+              </TooltipContent>
+            </Tooltip>
             <MobileCameraDrawer
               allCameras={effectiveCameras}
               selected={mainCamera}
@@ -818,6 +873,7 @@ export function RecordingView({
                     exportMode != "select" && debugReplayMode != "select"
                   }
                   fullscreen={fullscreen}
+                  streamQuality={streamQuality}
                   onTimestampUpdate={(timestamp) => {
                     setPlayerTime(timestamp);
                     setCurrentTime(timestamp);
@@ -902,6 +958,7 @@ export function RecordingView({
           <Timeline
             contentRef={contentRef}
             mainCamera={mainCamera}
+            getMainStreamAvailability={getMainStreamAvailability}
             timelineType={
               (exportRange == undefined && debugReplayRange == undefined
                 ? timelineType
@@ -939,6 +996,7 @@ type TimelineProps = {
   contentRef: MutableRefObject<HTMLDivElement | null>;
   timelineRef?: MutableRefObject<HTMLDivElement | null>;
   mainCamera: string;
+  getMainStreamAvailability?: (timestamp: number) => boolean;
   timelineType: TimelineType;
   timeRange: TimeRange;
   mainCameraReviewItems: ReviewSegment[];
@@ -956,6 +1014,7 @@ function Timeline({
   contentRef,
   timelineRef,
   mainCamera,
+  getMainStreamAvailability,
   timelineType,
   timeRange,
   mainCameraReviewItems,
@@ -1111,6 +1170,7 @@ function Timeline({
             events={mainCameraReviewItems}
             motion_events={motionData ?? []}
             noRecordingRanges={noRecordings ?? []}
+            getMainStreamAvailability={getMainStreamAvailability}
             contentRef={contentRef}
             onHandlebarDraggingChange={(scrubbing) => setScrubbing(scrubbing)}
             isZooming={isZooming}

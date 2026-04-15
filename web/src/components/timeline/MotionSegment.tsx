@@ -18,6 +18,7 @@ type MotionSegmentProps = {
   hasRecording?: boolean;
   prevIsNoRecording?: boolean;
   nextIsNoRecording?: boolean;
+  hasMainStream?: boolean;
   motionOnly: boolean;
   showMinimap: boolean;
   minimapStartTime?: number;
@@ -38,6 +39,7 @@ export function MotionSegment({
   hasRecording,
   prevIsNoRecording,
   nextIsNoRecording,
+  hasMainStream,
   motionOnly,
   showMinimap,
   minimapStartTime,
@@ -199,6 +201,9 @@ export function MotionSegment({
           onClick={segmentClick}
           onTouchEnd={(event) => handleTouchStart(event, segmentClick)}
         >
+          {hasMainStream && (
+            <div className="absolute right-0 top-0 h-full w-[3px] bg-selected/70" />
+          )}
           {isFirstSegmentWithoutRecording && (
             <div className="absolute bottom-[0px] left-0 right-0 h-[1px] bg-primary-variant/40" />
           )}

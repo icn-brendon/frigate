@@ -43,6 +43,11 @@ class FfmpegOutputArgsConfig(FrigateBaseModel):
         title="Record output arguments",
         description="Default output arguments for record role streams.",
     )
+    record_events: Union[str, list[str]] = Field(
+        default=RECORD_FFMPEG_OUTPUT_ARGS_DEFAULT,
+        title="Record events output arguments",
+        description="Default output arguments for record_events role streams (main stream event recording).",
+    )
 
 
 class FfmpegConfig(FrigateBaseModel):
@@ -110,6 +115,7 @@ class FfmpegConfig(FrigateBaseModel):
 class CameraRoleEnum(str, Enum):
     audio = "audio"
     record = "record"
+    record_events = "record_events"
     detect = "detect"
 
 
@@ -155,5 +161,12 @@ class CameraFfmpegConfig(FfmpegConfig):
 
         if "detect" not in roles:
             raise ValueError("The detect role is required.")
+
+        for input in v:
+            input_roles = {role.value if hasattr(role, "value") else role for role in input.roles}
+            if "record" in input_roles and "record_events" in input_roles:
+                raise ValueError(
+                    "The record and record_events roles must not be on the same input."
+                )
 
         return v

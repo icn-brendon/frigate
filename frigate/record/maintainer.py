@@ -115,9 +115,19 @@ class RecordingMaintainer(threading.Thread):
         for cache in cache_files:
             cache_path = os.path.join(CACHE_DIR, cache)
             basename = os.path.splitext(cache)[0]
+
+            # Parse segment name: camera@timestamp or camera@main@timestamp
             try:
-                camera, date = basename.rsplit("@", maxsplit=1)
-            except ValueError:
+                parts = basename.split("@")
+                if len(parts) == 3 and parts[1] == "main":
+                    camera = parts[0]
+                    date = parts[2]
+                elif len(parts) == 2:
+                    camera = parts[0]
+                    date = parts[1]
+                else:
+                    raise ValueError("Unexpected segment name format")
+            except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
                     self.unexpected_cache_files_logged = True
@@ -174,9 +184,23 @@ class RecordingMaintainer(threading.Thread):
 
             cache_path = os.path.join(CACHE_DIR, cache)
             basename = os.path.splitext(cache)[0]
+
+            # Parse segment name: camera@timestamp or camera@main@timestamp
+            stream_quality = "sub"
             try:
-                camera, date = basename.rsplit("@", maxsplit=1)
-            except ValueError:
+                parts = basename.split("@")
+                if len(parts) == 3 and parts[1] == "main":
+                    # Main stream event segment: camera@main@timestamp
+                    camera = parts[0]
+                    date = parts[2]
+                    stream_quality = "main"
+                elif len(parts) == 2:
+                    # Standard substream segment: camera@timestamp
+                    camera = parts[0]
+                    date = parts[1]
+                else:
+                    raise ValueError("Unexpected segment name format")
+            except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
                     self.unexpected_cache_files_logged = True
@@ -191,6 +215,7 @@ class RecordingMaintainer(threading.Thread):
                 {
                     "cache_path": cache_path,
                     "start_time": start_time,
+                    "stream_quality": stream_quality,
                 }
             )
 
@@ -320,6 +345,7 @@ class RecordingMaintainer(threading.Thread):
     ) -> Optional[dict[str, Any]]:
         cache_path: str = recording["cache_path"]
         start_time: datetime.datetime = recording["start_time"]
+        stream_quality: str = recording.get("stream_quality", "sub")
 
         # Just delete files if camera removed or recordings are turned off
         if (
@@ -372,6 +398,15 @@ class RecordingMaintainer(threading.Thread):
             )
 
         record_config = self.config.cameras[camera].record
+
+        # Main stream event segments are always kept — they only exist during
+        # events so no further filtering is needed. Use event_recording retention.
+        if stream_quality == "main":
+            return await self.move_segment(
+                camera, start_time, end_time, duration, cache_path,
+                RetainModeEnum.all, stream_quality,
+            )
+
         highest = None
 
         if record_config.continuous.days > 0:
@@ -402,7 +437,7 @@ class RecordingMaintainer(threading.Thread):
                     else RetainModeEnum.motion
                 )
                 return await self.move_segment(
-                    camera, start_time, end_time, duration, cache_path, record_mode
+                    camera, start_time, end_time, duration, cache_path, record_mode, stream_quality
                 )
 
         # we fell through the continuous / motion check, so we need to check the review items
@@ -443,6 +478,7 @@ class RecordingMaintainer(threading.Thread):
                 duration,
                 cache_path,
                 record_mode,
+                stream_quality,
             )
         # if it doesn't overlap with an review item, go ahead and drop the segment
         # if it ends more than the configured pre_capture for the camera
@@ -579,6 +615,7 @@ class RecordingMaintainer(threading.Thread):
         duration: float,
         cache_path: str,
         store_mode: RetainModeEnum,
+        stream_quality: str = "sub",
     ) -> Optional[dict[str, Any]]:
         segment_info = self.segment_stats(camera, start_time, end_time)
 
@@ -598,7 +635,8 @@ class RecordingMaintainer(threading.Thread):
             os.makedirs(directory)
 
         # file will be in utc due to start_time being in utc
-        file_name = f"{start_time.strftime('%M.%S.mp4')}"
+        quality_suffix = f"_{stream_quality}" if stream_quality != "sub" else ""
+        file_name = f"{start_time.strftime('%M.%S')}{quality_suffix}.mp4"
         file_path = os.path.join(directory, file_name)
 
         try:
@@ -661,6 +699,7 @@ class RecordingMaintainer(threading.Thread):
                     Recordings.dBFS.name: segment_info.average_dBFS,
                     Recordings.segment_size.name: segment_size,
                     Recordings.motion_heatmap.name: segment_info.motion_heatmap,
+                    Recordings.stream_quality.name: stream_quality,
                 }
         except Exception as e:
             logger.error(f"Unable to store recording segment {cache_path}")

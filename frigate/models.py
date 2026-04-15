@@ -79,6 +79,7 @@ class Recordings(Model):
     segment_size = FloatField(default=0)  # this should be stored as MB
     regions = IntegerField(null=True)
     motion_heatmap = JSONField(null=True)  # 16x16 grid, 256 values (0-255)
+    stream_quality = CharField(default="sub", max_length=10)  # "sub" or "main"
 
 
 class ExportCase(Model):

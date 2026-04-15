@@ -9,6 +9,7 @@ from frigate.review.types import SeverityEnum
 from ..base import FrigateBaseModel
 
 __all__ = [
+    "EventRecordingConfig",
     "RecordConfig",
     "RecordExportConfig",
     "RecordPreviewConfig",
@@ -67,6 +68,32 @@ class EventsConfig(FrigateBaseModel):
         default_factory=ReviewRetainConfig,
         title="Event retention",
         description="Retention settings for recordings of detection events.",
+    )
+
+
+class EventRecordingConfig(FrigateBaseModel):
+    enabled: bool = Field(
+        default=False,
+        title="Enable event recording",
+        description="Enable recording from the main stream during motion/detection events.",
+    )
+    pre_capture: int = Field(
+        default=5,
+        ge=0,
+        le=MAX_PRE_CAPTURE,
+        title="Pre-capture seconds",
+        description="Number of seconds before the event to include in the main stream recording.",
+    )
+    post_capture: int = Field(
+        default=10,
+        ge=0,
+        title="Post-capture seconds",
+        description="Number of seconds after the event to include in the main stream recording.",
+    )
+    retain: ReviewRetainConfig = Field(
+        default_factory=ReviewRetainConfig,
+        title="Event recording retention",
+        description="Retention settings for main stream event recordings.",
     )
 
 
@@ -130,6 +157,11 @@ class RecordConfig(FrigateBaseModel):
         default_factory=EventsConfig,
         title="Alert retention",
         description="Recording retention settings for alert events including pre/post capture durations.",
+    )
+    event_recording: EventRecordingConfig = Field(
+        default_factory=EventRecordingConfig,
+        title="Event recording",
+        description="Settings for event-driven recording from the main stream during motion/detection events.",
     )
     export: RecordExportConfig = Field(
         default_factory=RecordExportConfig,

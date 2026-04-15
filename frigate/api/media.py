@@ -552,13 +552,15 @@ async def vod_ts(
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
+    stream_quality: str = "sub",
 ):
     logger.debug(
-        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s",
+        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
         camera_name,
         start_ts,
         end_ts,
         force_discontinuity,
+        stream_quality,
     )
     recordings = (
         Recordings.select(
@@ -573,6 +575,7 @@ async def vod_ts(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        .where(Recordings.stream_quality == stream_quality)
         .order_by(Recordings.start_time.asc())
         .iterator()
     )
@@ -702,7 +705,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
     description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_hour(
-    year_month: str, day: int, hour: int, camera_name: str, tz_name: str
+    year_month: str,
+    day: int,
+    hour: int,
+    camera_name: str,
+    tz_name: str,
+    quality: str = Query("sub", description="Stream quality: sub or main"),
 ):
     parts = year_month.split("-")
     start_date = (
@@ -713,7 +721,7 @@ async def vod_hour(
     start_ts = start_date.timestamp()
     end_ts = end_date.timestamp()
 
-    return await vod_ts(camera_name, start_ts, end_ts)
+    return await vod_ts(camera_name, start_ts, end_ts, stream_quality=quality)
 
 
 @router.get(
@@ -768,8 +776,9 @@ async def vod_clip(
     camera_name: str,
     start_ts: float,
     end_ts: float,
+    quality: str = Query("sub", description="Stream quality: sub or main"),
 ):
-    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
+    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True, stream_quality=quality)
 
 
 @router.get(

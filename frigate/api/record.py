@@ -169,6 +169,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
                 (Recordings.camera == camera_name)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
+                & (Recordings.stream_quality == "sub")
             )
             .group_by((Recordings.start_time + period_offset).cast("int") / 3600)
             .order_by(Recordings.start_time.desc())
@@ -229,6 +230,7 @@ async def recordings(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
+    quality: str = "sub",
 ):
     """Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used"""
     recordings = (
@@ -241,11 +243,39 @@ async def recordings(
             Recordings.objects,
             Recordings.motion_heatmap,
             Recordings.duration,
+            Recordings.stream_quality,
         )
         .where(
             Recordings.camera == camera_name,
             Recordings.end_time >= after,
             Recordings.start_time <= before,
+            Recordings.stream_quality == quality,
+        )
+        .order_by(Recordings.start_time)
+        .dicts()
+        .iterator()
+    )
+
+    return JSONResponse(content=list(recordings))
+
+
+@router.get("/{camera_name}/recordings/main_availability", dependencies=[Depends(require_camera_access)])
+async def main_stream_availability(
+    camera_name: str,
+    after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
+    before: float = datetime.now().timestamp(),
+):
+    """Return time ranges where main stream recordings are available."""
+    recordings = (
+        Recordings.select(
+            Recordings.start_time,
+            Recordings.end_time,
+        )
+        .where(
+            Recordings.camera == camera_name,
+            Recordings.end_time >= after,
+            Recordings.start_time <= before,
+            Recordings.stream_quality == "main",
         )
         .order_by(Recordings.start_time)
         .dicts()
