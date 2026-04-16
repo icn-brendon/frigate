@@ -47,6 +47,9 @@ jobs:
         id: slug
         run: echo "value=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
 
+      - name: Generate version file
+        run: make version
+
       - name: Build and push amd64 image
         uses: docker/build-push-action@v5
         with:
