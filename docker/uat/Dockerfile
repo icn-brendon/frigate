@@ -8,6 +8,9 @@
 # modified components (RecordingView, timeline, DynamicVideoPlayer)
 # match the Python API responses.
 
+# Global ARG must be before any FROM to be visible in FROM directives
+ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:stable-rocm
+
 # ---------------------------------------------------------------------------
 # Stage 1: build the web frontend (discarded after COPY)
 # ---------------------------------------------------------------------------
@@ -23,7 +26,6 @@ RUN npm run build \
 # ---------------------------------------------------------------------------
 # Stage 2: overlay onto upstream base image
 # ---------------------------------------------------------------------------
-ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:stable-rocm
 FROM ${BASE_IMAGE}
 
 # Overwrite Python source and migrations with our fork's versions
