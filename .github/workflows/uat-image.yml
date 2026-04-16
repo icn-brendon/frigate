@@ -65,7 +65,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-and-push-rocm:
-    name: Build and push ROCm UAT image to GHCR
+    name: Build and push ROCm UAT overlay to GHCR
     runs-on: ubuntu-22.04
     needs: []
     permissions:
@@ -76,9 +76,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -105,17 +102,15 @@ jobs:
       - name: Generate version file
         run: make version
 
-      - name: Build and push ROCm image
-        env:
-          HSA_OVERRIDE: "0"
-        uses: docker/bake-action@v7
+      - name: Build and push ROCm overlay
+        uses: docker/build-push-action@v5
         with:
-          source: .
+          context: .
+          file: docker/uat/Dockerfile
+          platforms: linux/amd64
           push: true
-          targets: rocm
-          files: docker/rocm/rocm.hcl
-          set: |
-            rocm.tags=${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ steps.sha.outputs.short }}-rocm
-            rocm.tags=${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ steps.slug.outputs.value }}-rocm
-            *.cache-from=type=gha,scope=rocm
-            *.cache-to=type=gha,scope=rocm,mode=max
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ steps.sha.outputs.short }}-rocm
+            ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}:${{ steps.slug.outputs.value }}-rocm
+          build-args: |
+            BASE_IMAGE=ghcr.io/blakeblackshear/frigate:stable-rocm
