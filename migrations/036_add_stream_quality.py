@@ -29,17 +29,19 @@ def _has_stream_quality_index(database) -> bool:
 
 def migrate(migrator, database, fake=False, **kwargs):
     # Idempotent column add: SQLite has no "ADD COLUMN IF NOT EXISTS".
+    # Use database.execute_sql() directly instead of migrator.sql() because
+    # migrator.sql() defers execution. The backfill UPDATE below runs
+    # immediately via execute_sql and would fail with "no such column" if
+    # the ALTER TABLE hasn't been flushed yet.
     if not _has_stream_quality_column(database):
-        migrator.sql(
+        database.execute_sql(
             'ALTER TABLE "recordings" ADD COLUMN "stream_quality" '
             "VARCHAR(10) NOT NULL DEFAULT 'sub'"
         )
 
-    # Idempotent index create. CREATE INDEX IF NOT EXISTS is supported by
-    # SQLite, but we also guard so a future re-run on a partially upgraded
-    # DB does not spuriously rebuild it.
+    # Idempotent index create.
     if not _has_stream_quality_index(database):
-        migrator.sql(
+        database.execute_sql(
             'CREATE INDEX IF NOT EXISTS "recordings_stream_quality" '
             'ON "recordings" ("camera", "stream_quality", "start_time")'
         )
