@@ -156,13 +156,22 @@ class EventRecorder(threading.Thread):
                 continue
 
             has_motion = len(motion_boxes) > 0
+            obj_filters = self.camera_configs[camera].objects.filters
             has_objects = (
                 len(
                     [
                         o
                         for o in current_tracked_objects
                         if not o["false_positive"]
-                        and o.get("motionless_count", 0) == 0
+                        and (
+                            o.get("motionless_count", 0) == 0
+                            or (
+                                o.get("label") in obj_filters
+                                and obj_filters[
+                                    o["label"]
+                                ].stationary_trigger_recording
+                            )
+                        )
                     ]
                 )
                 > 0

@@ -47,15 +47,25 @@ def _ts_filename(dt: datetime.datetime) -> str:
     return dt.strftime(CACHE_SEGMENT_FORMAT) + ".mp4"
 
 
+class _FakeFilterConfig:
+    """Minimal stand-in for FilterConfig with stationary_trigger_recording."""
+
+    def __init__(self, stationary_trigger_recording: bool = False):
+        self.stationary_trigger_recording = stationary_trigger_recording
+
+
 def _make_camera_cfg(
     pre_capture: int = 5,
     post_capture: int = 10,
     event_recording_enabled: bool = True,
+    object_filters: dict | None = None,
 ):
     cfg = MagicMock()
     cfg.record.event_recording.pre_capture = pre_capture
     cfg.record.event_recording.post_capture = post_capture
     cfg.record.event_recording.enabled = event_recording_enabled
+    # Default to an empty dict so `label in obj_filters` works correctly.
+    cfg.objects.filters = object_filters if object_filters is not None else {}
     return cfg
 
 
@@ -358,15 +368,18 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
 class TestStationaryObjectsDoNotTrigger(_RecorderFixture):
     def test_stationary_objects_do_not_activate_recording(self):
         """A parked car (motionless_count > 0) that is not a false positive
-        should NOT trigger mainstream event recording."""
+        should NOT trigger mainstream event recording when the per-object
+        stationary_trigger_recording is disabled (default)."""
         recorder = self._make_recorder(
             cameras=("cam1",), pre_capture=5, post_capture=10
         )
         state = recorder.camera_states["cam1"]
 
-        # Simulate a detection event with only stationary (motionless) objects
-        # and no motion boxes.
-        stationary_obj = {"false_positive": False, "motionless_count": 500}
+        stationary_obj = {
+            "false_positive": False,
+            "motionless_count": 500,
+            "label": "car",
+        }
         data = ("cam1", None, time.time(), [stationary_obj], [], [])
 
         recorder.detection_subscriber.check_for_update.side_effect = [
@@ -387,7 +400,11 @@ class TestStationaryObjectsDoNotTrigger(_RecorderFixture):
         )
         state = recorder.camera_states["cam1"]
 
-        active_obj = {"false_positive": False, "motionless_count": 0}
+        active_obj = {
+            "false_positive": False,
+            "motionless_count": 0,
+            "label": "person",
+        }
         data = ("cam1", None, time.time(), [active_obj], [], [])
 
         recorder.detection_subscriber.check_for_update.side_effect = [
@@ -408,12 +425,105 @@ class TestStationaryObjectsDoNotTrigger(_RecorderFixture):
         )
         state = recorder.camera_states["cam1"]
 
-        stationary = {"false_positive": False, "motionless_count": 100}
-        active = {"false_positive": False, "motionless_count": 0}
+        stationary = {
+            "false_positive": False,
+            "motionless_count": 100,
+            "label": "car",
+        }
+        active = {
+            "false_positive": False,
+            "motionless_count": 0,
+            "label": "person",
+        }
         data = ("cam1", None, time.time(), [stationary, active], [], [])
 
         recorder.detection_subscriber.check_for_update.side_effect = [
             ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertTrue(state.is_active)
+
+    def test_stationary_trigger_recording_enabled_per_object(self):
+        """When stationary_trigger_recording is enabled for a specific
+        object type, stationary instances of that type SHOULD trigger
+        mainstream recording."""
+        filters = {
+            "car": _FakeFilterConfig(stationary_trigger_recording=True),
+        }
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        recorder.camera_configs["cam1"].objects.filters = filters
+        state = recorder.camera_states["cam1"]
+
+        stationary_car = {
+            "false_positive": False,
+            "motionless_count": 500,
+            "label": "car",
+        }
+        data = ("cam1", None, time.time(), [stationary_car], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertTrue(state.is_active)
+        self.assertGreater(state.last_activity_time, 0.0)
+
+    def test_stationary_trigger_recording_respects_per_object_setting(self):
+        """When stationary_trigger_recording is enabled for 'car' but not
+        'person', a stationary person should NOT trigger recording while
+        a stationary car should."""
+        filters = {
+            "car": _FakeFilterConfig(stationary_trigger_recording=True),
+            "person": _FakeFilterConfig(stationary_trigger_recording=False),
+        }
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        recorder.camera_configs["cam1"].objects.filters = filters
+        state = recorder.camera_states["cam1"]
+
+        # Only a stationary person -- should NOT trigger.
+        stationary_person = {
+            "false_positive": False,
+            "motionless_count": 200,
+            "label": "person",
+        }
+        data = ("cam1", None, time.time(), [stationary_person], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertFalse(state.is_active)
+
+        # Now add a stationary car (enabled) -- should trigger.
+        stationary_car = {
+            "false_positive": False,
+            "motionless_count": 300,
+            "label": "car",
+        }
+        data2 = (
+            "cam1",
+            None,
+            time.time(),
+            [stationary_person, stationary_car],
+            [],
+            [],
+        )
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data2),
             None,
         ]
 
