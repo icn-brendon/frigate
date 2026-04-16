@@ -43,9 +43,9 @@ class FilterConfig(FrigateBaseModel):
         description="Minimum single-frame detection confidence required for the object to be counted.",
     )
     stationary_trigger_recording: bool = Field(
-        default=False,
+        default=True,
         title="Stationary triggers recording",
-        description="When enabled, stationary (motionless) instances of this object type will trigger mainstream event recording. When disabled (default), only actively moving objects trigger recording — a parked car, for example, will not cause indefinite mainstream recording.",
+        description="When enabled (default), stationary (motionless) instances of this object type will trigger mainstream event recording. Disable per-object to prevent stationary instances from causing indefinite mainstream recording — e.g. a parked car.",
     )
     mask: dict[str, Optional[ObjectMaskConfig]] = Field(
         default_factory=dict,

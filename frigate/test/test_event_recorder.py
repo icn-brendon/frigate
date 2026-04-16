@@ -50,7 +50,7 @@ def _ts_filename(dt: datetime.datetime) -> str:
 class _FakeFilterConfig:
     """Minimal stand-in for FilterConfig with stationary_trigger_recording."""
 
-    def __init__(self, stationary_trigger_recording: bool = False):
+    def __init__(self, stationary_trigger_recording: bool = True):
         self.stationary_trigger_recording = stationary_trigger_recording
 
 
@@ -365,14 +365,72 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
         self.assertEqual(parsed, expected)
 
 
-class TestStationaryObjectsDoNotTrigger(_RecorderFixture):
-    def test_stationary_objects_do_not_activate_recording(self):
+class TestStationaryObjectsTriggerByDefault(_RecorderFixture):
+    def test_stationary_objects_trigger_when_filter_present_with_default(self):
         """A parked car (motionless_count > 0) that is not a false positive
-        should NOT trigger mainstream event recording when the per-object
-        stationary_trigger_recording is disabled (default)."""
+        SHOULD trigger mainstream event recording when the per-object filter
+        exists with the default stationary_trigger_recording=True."""
+        filters = {
+            "car": _FakeFilterConfig(),  # default is now True
+        }
         recorder = self._make_recorder(
             cameras=("cam1",), pre_capture=5, post_capture=10
         )
+        recorder.camera_configs["cam1"].objects.filters = filters
+        state = recorder.camera_states["cam1"]
+
+        stationary_obj = {
+            "false_positive": False,
+            "motionless_count": 500,
+            "label": "car",
+        }
+        data = ("cam1", None, time.time(), [stationary_obj], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertTrue(state.is_active)
+        self.assertGreater(state.last_activity_time, 0.0)
+
+    def test_stationary_objects_without_filter_entry_do_not_trigger(self):
+        """A stationary object whose label has no entry in object_filters
+        should NOT trigger recording (the filter lookup short-circuits)."""
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        state = recorder.camera_states["cam1"]
+
+        stationary_obj = {
+            "false_positive": False,
+            "motionless_count": 500,
+            "label": "car",
+        }
+        data = ("cam1", None, time.time(), [stationary_obj], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertFalse(state.is_active)
+        self.assertEqual(state.last_activity_time, 0.0)
+
+    def test_stationary_objects_opt_out_with_false(self):
+        """When stationary_trigger_recording is explicitly set to False,
+        stationary objects should NOT trigger recording (user opt-out)."""
+        filters = {
+            "car": _FakeFilterConfig(stationary_trigger_recording=False),
+        }
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        recorder.camera_configs["cam1"].objects.filters = filters
         state = recorder.camera_states["cam1"]
 
         stationary_obj = {

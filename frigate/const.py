@@ -130,7 +130,7 @@ PREVIEW_FRAME_TYPE = "webp"
 CACHE_SEGMENT_FORMAT = "%Y%m%d%H%M%S%z"
 MAX_PRE_CAPTURE = 60
 MAX_SEGMENT_DURATION = 600
-MAX_SEGMENTS_IN_CACHE = 6
+MAX_SEGMENTS_IN_CACHE = 15
 MAX_PLAYLIST_SECONDS = 7200  # support 2 hour segments for a single playlist to account for cameras with inconsistent segment times
 
 # Internal Comms Topics
