@@ -189,8 +189,9 @@ export default function DynamicVideoPlayer({
     () => ({
       before: timeRange.before,
       after: timeRange.after,
+      quality: streamQuality,
     }),
-    [timeRange],
+    [timeRange, streamQuality],
   );
   const { data: recordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
@@ -221,9 +222,9 @@ export default function DynamicVideoPlayer({
       );
     }
 
-    const qualityParam = streamQuality === "main" ? "?quality=main" : "";
+    const qualitySegment = streamQuality === "main" ? "/quality/main" : "";
     setSource({
-      playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8${qualityParam}`,
+      playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}${qualitySegment}/master.m3u8`,
       startPosition,
     });
 

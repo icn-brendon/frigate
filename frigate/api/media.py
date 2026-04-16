@@ -732,6 +732,20 @@ async def vod_ts(
 
 
 @router.get(
+    "/vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}",
+    dependencies=[Depends(require_camera_access)],
+    description="Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.",
+)
+async def vod_ts_with_quality(
+    camera_name: str,
+    start_ts: float,
+    end_ts: float,
+    quality: str,
+):
+    return await vod_ts(camera_name, start_ts, end_ts, stream_quality=quality)
+
+
+@router.get(
     "/vod/{year_month}/{day}/{hour}/{camera_name}",
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified date-time on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
