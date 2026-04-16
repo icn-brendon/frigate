@@ -522,5 +522,35 @@ class TestNoValidFallback(_DualStreamRetentionBase):
         self.assertTrue(self._exists(old_path))
 
 
+# =====================================================================
+# test 13: sub expire pass respects stream_quality column (B1-r2 unskip)
+# =====================================================================
+class TestCleanupRespectsStreamQualityColumn(_DualStreamRetentionBase):
+    def test_cleanup_respects_stream_quality_column(self):
+        """A Recordings row with stream_quality='main' must survive the sub
+        expire pass regardless of its age. This is the real DB-backed
+        replacement for the previously @unittest.skip-decorated test that
+        documented B1 before the fix landed."""
+        old = 30 * DAY
+        main_path = self._seed("main_old", "back", "main", old, motion=1)
+
+        cfg = _make_camera_config(
+            continuous_days=1, motion_days=1, event_retain_days=30
+        )
+        continuous_expire = (
+            self.now - datetime.timedelta(days=1)
+        ).timestamp()
+        motion_expire = continuous_expire
+
+        # Run the sub expire pass -- it should NOT touch main rows.
+        self.cleanup.expire_existing_camera_recordings(
+            continuous_expire, motion_expire, cfg, reviews=[]
+        )
+
+        # The main row and its file must still exist.
+        self.assertTrue(self._row_exists("main_old"))
+        self.assertTrue(self._exists(main_path))
+
+
 if __name__ == "__main__":
     unittest.main()

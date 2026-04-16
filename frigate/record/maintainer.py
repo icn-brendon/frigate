@@ -117,9 +117,10 @@ class RecordingMaintainer(threading.Thread):
             basename = os.path.splitext(cache)[0]
 
             # Parse segment name: camera@timestamp or camera@main@timestamp.
-            # Camera names may legitimately contain '@', so split off the
-            # rightmost @<timestamp> first, then check for the optional
-            # @main marker on the remaining prefix (M5).
+            # REGEX_CAMERA_NAME (^[a-zA-Z0-9_-]+$) forbids '@' in camera
+            # names, so rsplit("@", 1) is unambiguous: the last '@' always
+            # separates the timestamp (or the @main marker) from the camera.
+            # See test_camera_name_with_at_symbol_rejected_by_regex (M5).
             try:
                 if "@" not in basename:
                     raise ValueError("Unexpected segment name format")

@@ -69,7 +69,7 @@ class TestDualStreamConfig(unittest.TestCase):
         frigate_config = FrigateConfig(**self.minimal_single)
         cam = frigate_config.cameras["back"]
         self.assertFalse(cam.record.event_recording.enabled)
-        self.assertEqual(cam.record.event_recording.pre_capture, 5)
+        self.assertEqual(cam.record.event_recording.pre_capture, 15)
         self.assertEqual(cam.record.event_recording.post_capture, 10)
 
     def test_event_recording_post_capture_must_be_non_negative(self):
@@ -192,6 +192,31 @@ class TestDualStreamConfig(unittest.TestCase):
             "mqtt": {"host": "mqtt"},
             "cameras": {
                 "foo@main@bar": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {
+                                "path": "rtsp://10.0.0.1:554/video",
+                                "roles": ["detect", "record"],
+                            }
+                        ]
+                    },
+                    "detect": {"height": 1080, "width": 1920, "fps": 5},
+                    "record": {"enabled": True},
+                }
+            },
+        }
+        with self.assertRaises(ValidationError):
+            FrigateConfig(**cfg)
+
+    def test_camera_name_with_at_symbol_rejected_by_regex(self):
+        """REGEX_CAMERA_NAME (^[a-zA-Z0-9_-]+$) forbids '@' in camera names.
+        This is the foundational guarantee that the maintainer's rsplit('@',1)
+        parser cannot be fooled by a camera named e.g. 'foo@main' (M5/M3-r2).
+        """
+        cfg = {
+            "mqtt": {"host": "mqtt"},
+            "cameras": {
+                "foo@main": {
                     "ffmpeg": {
                         "inputs": [
                             {
