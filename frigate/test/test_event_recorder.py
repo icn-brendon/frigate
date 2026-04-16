@@ -355,5 +355,72 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
         self.assertEqual(parsed, expected)
 
 
+class TestStationaryObjectsDoNotTrigger(_RecorderFixture):
+    def test_stationary_objects_do_not_activate_recording(self):
+        """A parked car (motionless_count > 0) that is not a false positive
+        should NOT trigger mainstream event recording."""
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        state = recorder.camera_states["cam1"]
+
+        # Simulate a detection event with only stationary (motionless) objects
+        # and no motion boxes.
+        stationary_obj = {"false_positive": False, "motionless_count": 500}
+        data = ("cam1", None, time.time(), [stationary_obj], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertFalse(state.is_active)
+        self.assertEqual(state.last_activity_time, 0.0)
+
+    def test_active_objects_still_trigger_recording(self):
+        """An active (motionless_count == 0) non-false-positive object
+        should still trigger mainstream recording."""
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        state = recorder.camera_states["cam1"]
+
+        active_obj = {"false_positive": False, "motionless_count": 0}
+        data = ("cam1", None, time.time(), [active_obj], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertTrue(state.is_active)
+        self.assertGreater(state.last_activity_time, 0.0)
+
+    def test_mixed_stationary_and_active_triggers_recording(self):
+        """If at least one object is active among stationary ones,
+        recording should be triggered."""
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        state = recorder.camera_states["cam1"]
+
+        stationary = {"false_positive": False, "motionless_count": 100}
+        active = {"false_positive": False, "motionless_count": 0}
+        data = ("cam1", None, time.time(), [stationary, active], [], [])
+
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+
+        self.assertTrue(state.is_active)
+
+
 if __name__ == "__main__":
     unittest.main()

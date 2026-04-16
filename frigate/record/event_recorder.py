@@ -162,6 +162,7 @@ class EventRecorder(threading.Thread):
                         o
                         for o in current_tracked_objects
                         if not o["false_positive"]
+                        and o.get("motionless_count", 0) == 0
                     ]
                 )
                 > 0
