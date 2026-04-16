@@ -50,8 +50,13 @@ def _ts_filename(dt: datetime.datetime) -> str:
 class _FakeFilterConfig:
     """Minimal stand-in for FilterConfig with stationary_trigger_recording."""
 
-    def __init__(self, stationary_trigger_recording: bool = True):
+    def __init__(
+        self,
+        stationary_trigger_recording: bool = True,
+        stationary_recording_threshold: int | None = None,
+    ):
         self.stationary_trigger_recording = stationary_trigger_recording
+        self.stationary_recording_threshold = stationary_recording_threshold
 
 
 def _make_camera_cfg(
@@ -59,11 +64,13 @@ def _make_camera_cfg(
     post_capture: int = 10,
     event_recording_enabled: bool = True,
     object_filters: dict | None = None,
+    detect_fps: int = 5,
 ):
     cfg = MagicMock()
     cfg.record.event_recording.pre_capture = pre_capture
     cfg.record.event_recording.post_capture = post_capture
     cfg.record.event_recording.enabled = event_recording_enabled
+    cfg.detect.fps = detect_fps
     # Default to an empty dict so `label in obj_filters` works correctly.
     cfg.objects.filters = object_filters if object_filters is not None else {}
     return cfg
@@ -588,6 +595,95 @@ class TestStationaryObjectsTriggerByDefault(_RecorderFixture):
         recorder._process_detection_events()
 
         self.assertTrue(state.is_active)
+
+
+class TestStationaryRecordingThreshold(_RecorderFixture):
+    """Tests for the per-object stationary_recording_threshold (seconds)."""
+
+    def test_below_threshold_still_triggers_recording(self):
+        """An object whose motionless_count is below threshold*fps should
+        still be treated as active and trigger recording."""
+        # threshold=10s, fps=5 -> 50 frames needed. Object has 30 frames.
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=True,
+                stationary_recording_threshold=10,
+            ),
+        }
+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
+        recorder.camera_configs["cam1"].objects.filters = filters
+        recorder.camera_configs["cam1"].detect.fps = 5
+        state = recorder.camera_states["cam1"]
+
+        obj = {
+            "false_positive": False,
+            "motionless_count": 30,  # < 10*5=50
+            "label": "car",
+        }
+        data = ("cam1", None, time.time(), [obj], [], [])
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+        self.assertTrue(state.is_active)
+
+    def test_above_threshold_still_triggers_when_stationary_trigger_enabled(self):
+        """An object past the threshold is stationary, but with
+        stationary_trigger_recording=True it still triggers recording."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=True,
+                stationary_recording_threshold=10,
+            ),
+        }
+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
+        recorder.camera_configs["cam1"].objects.filters = filters
+        recorder.camera_configs["cam1"].detect.fps = 5
+        state = recorder.camera_states["cam1"]
+
+        obj = {
+            "false_positive": False,
+            "motionless_count": 100,  # > 10*5=50
+            "label": "car",
+        }
+        data = ("cam1", None, time.time(), [obj], [], [])
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+        self.assertTrue(state.is_active)
+
+    def test_none_threshold_falls_back_to_original_behavior(self):
+        """When stationary_recording_threshold is None, any motionless_count > 0
+        is immediately considered stationary (original behavior)."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=None,
+            ),
+        }
+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
+        recorder.camera_configs["cam1"].objects.filters = filters
+        recorder.camera_configs["cam1"].detect.fps = 5
+        state = recorder.camera_states["cam1"]
+
+        obj = {
+            "false_positive": False,
+            "motionless_count": 1,
+            "label": "car",
+        }
+        data = ("cam1", None, time.time(), [obj], [], [])
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+
+        recorder._process_detection_events()
+        self.assertFalse(state.is_active)
 
 
 if __name__ == "__main__":

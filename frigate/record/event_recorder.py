@@ -157,21 +157,14 @@ class EventRecorder(threading.Thread):
 
             has_motion = len(motion_boxes) > 0
             obj_filters = self.camera_configs[camera].objects.filters
+            camera_fps = self.camera_configs[camera].detect.fps
             has_objects = (
                 len(
                     [
                         o
                         for o in current_tracked_objects
                         if not o["false_positive"]
-                        and (
-                            o.get("motionless_count", 0) == 0
-                            or (
-                                o.get("label") in obj_filters
-                                and obj_filters[
-                                    o["label"]
-                                ].stationary_trigger_recording
-                            )
-                        )
+                        and self._is_object_active(o, obj_filters, camera_fps)
                     ]
                 )
                 > 0
@@ -187,6 +180,46 @@ class EventRecorder(threading.Thread):
                         f"{self.camera_configs[camera].record.event_recording.pre_capture}s "
                         "of mainstream ring buffer"
                     )
+
+    @staticmethod
+    def _is_object_active(
+        obj: dict, obj_filters: dict, camera_fps: int
+    ) -> bool:
+        """Return True if the tracked object should be treated as active
+        (i.e. should trigger or sustain mainstream event recording).
+
+        An object with ``motionless_count == 0`` is always active.  For
+        stationary objects (motionless_count > 0), we check two things:
+
+        1. ``stationary_trigger_recording`` must be enabled for the label.
+        2. If ``stationary_recording_threshold`` (seconds) is set on the
+           filter, the object is only considered *stationary* once
+           ``motionless_count >= threshold * fps``.  Until that frame
+           count is reached the object is still treated as active.
+        """
+        motionless = obj.get("motionless_count", 0)
+        if motionless == 0:
+            return True
+
+        label = obj.get("label")
+        if label not in obj_filters:
+            return False
+
+        filt = obj_filters[label]
+        if not filt.stationary_trigger_recording:
+            return False
+
+        # If a seconds-based threshold is configured, the object is still
+        # "active" until it has been motionless for that many seconds.
+        threshold_sec = getattr(filt, "stationary_recording_threshold", None)
+        if threshold_sec is not None:
+            threshold_frames = threshold_sec * max(camera_fps, 1)
+            if motionless < threshold_frames:
+                return True  # not yet stationary — still active
+
+        # stationary_trigger_recording is True, so stationary objects
+        # still trigger recording.
+        return True
 
     # ------------------------ buffer maintenance -----------------------
 

@@ -47,6 +47,13 @@ class FilterConfig(FrigateBaseModel):
         title="Stationary triggers recording",
         description="When enabled (default), stationary (motionless) instances of this object type will trigger mainstream event recording. Disable per-object to prevent stationary instances from causing indefinite mainstream recording — e.g. a parked car.",
     )
+    stationary_recording_threshold: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=300,
+        title="Stationary recording threshold (seconds)",
+        description="Number of seconds an object must be motionless before it is considered stationary for event recording purposes. When None, falls back to detect.stationary.threshold (frame-based).",
+    )
     mask: dict[str, Optional[ObjectMaskConfig]] = Field(
         default_factory=dict,
         title="Filter mask",
