@@ -57,6 +57,21 @@ from frigate.util.media import get_keyframe_before
 logger = logging.getLogger(__name__)
 
 
+def recording_row_is_main(row) -> bool:
+    """Return True if a Recordings row represents a main-quality segment.
+
+    Detects main via EITHER ``stream_quality == "main"`` OR the on-disk path
+    ending in ``_main.mp4``. The path suffix is the fallback for rows written
+    before the maintainer correctly propagated ``stream_quality`` on insert;
+    without it, such rows would be treated as sub and produce overlapping
+    intervals in the VOD playlist merge.
+    """
+    if getattr(row, "stream_quality", None) == "main":
+        return True
+    path = getattr(row, "path", None)
+    return bool(path) and path.endswith("_main.mp4")
+
+
 router = APIRouter(tags=[Tags.media])
 
 
@@ -566,8 +581,18 @@ async def vod_ts(
     # segments for any time range that has no main coverage, so the player
     # never stalls in gaps between events. We pull both qualities and then
     # filter out sub segments that are fully covered by main segments below.
+    #
+    # Defensive fallback: identify main segments via EITHER the
+    # ``stream_quality == "main"`` column OR a ``_main.mp4`` path suffix.
+    # Pre-existing rows written before the maintainer was corrected could
+    # have ``stream_quality == "sub"`` despite being main-quality files; the
+    # path-pattern check keeps the merge logic correct for those rows and
+    # prevents overlapping intervals from breaking the VOD playlist.
+    is_main_row = (Recordings.stream_quality == "main") | (
+        Recordings.path.endswith("_main.mp4")
+    )
     quality_filter = (
-        (Recordings.stream_quality == "main") | (Recordings.stream_quality == "sub")
+        is_main_row | (Recordings.stream_quality == "sub")
         if stream_quality == "main"
         else (Recordings.stream_quality == stream_quality)
     )
@@ -592,7 +617,7 @@ async def vod_ts(
 
     if stream_quality == "main":
         all_rows = list(recordings_query)
-        main_rows = [r for r in all_rows if r.stream_quality == "main"]
+        main_rows = [r for r in all_rows if recording_row_is_main(r)]
 
         # Build merged main coverage intervals for fast containment check.
         main_intervals: list[list[float]] = []
@@ -612,7 +637,7 @@ async def vod_ts(
 
         filtered = []
         for r in all_rows:
-            if r.stream_quality == "main":
+            if recording_row_is_main(r):
                 filtered.append(r)
             else:
                 # keep sub only where it is not fully shadowed by main coverage

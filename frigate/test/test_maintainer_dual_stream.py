@@ -235,5 +235,120 @@ class TestMoveSegmentFilenameAndRecord(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[Recordings.stream_quality.name], "main")
 
 
+class TestMainBasenameProducesMainRecord(unittest.IsolatedAsyncioTestCase):
+    """End-to-end parse pipeline: a ``@main@`` cache filename must result in
+    a ``move_segment`` invocation (and therefore a Recordings insert payload)
+    carrying ``stream_quality="main"``, not the CharField default of "sub".
+
+    Regression test for the bug where event_recorder promoted
+    ``camera@main@ts.mp4`` files but Recordings rows were tagged sub, which
+    broke vod_ts main/sub merge logic and produced overlapping playlist
+    intervals."""
+
+    async def test_main_basename_propagates_to_move_segment(self):
+        import tempfile
+
+        maintainer = _make_maintainer()
+
+        cam_cfg = MagicMock()
+        cam_cfg.record.enabled = True
+        cam_cfg.record.continuous.days = 0
+        cam_cfg.record.motion.days = 0
+        cam_cfg.record.event_recording.retain.mode = RetainModeEnum.all
+        maintainer.config.cameras = {"back": cam_cfg}
+        maintainer.recordings_publisher = MagicMock()
+        maintainer.requestor = MagicMock()
+        maintainer.move_segment = AsyncMock(
+            return_value={
+                Recordings.stream_quality.name: "main",
+                Recordings.path.name: "/tmp/00.00_main.mp4",
+            }
+        )
+
+        # prime end_time_cache so validate_and_move_segment doesn't ffprobe
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_file = "back@main@20260101000000+0000.mp4"
+            cache_path = os.path.join(tmpdir, cache_file)
+            with open(cache_path, "wb") as f:
+                f.write(b"\x00" * 1024)
+            start = datetime.datetime(
+                2026, 1, 1, tzinfo=datetime.timezone.utc
+            )
+            maintainer.end_time_cache[cache_path] = (
+                start + datetime.timedelta(seconds=10),
+                10.0,
+            )
+
+            with patch(
+                "frigate.record.maintainer.CACHE_DIR", tmpdir
+            ), patch(
+                "frigate.record.maintainer.os.listdir",
+                return_value=[cache_file],
+            ), patch(
+                "frigate.record.maintainer.os.path.isfile", return_value=True
+            ), patch(
+                "frigate.record.maintainer.psutil.process_iter", return_value=[]
+            ), patch(
+                "frigate.record.maintainer.ReviewSegment"
+            ) as mock_rs:
+                mock_rs.select.return_value.where.return_value.order_by.return_value = []
+                await maintainer.move_files()
+
+        self.assertEqual(maintainer.move_segment.call_count, 1)
+        args, _ = maintainer.move_segment.call_args
+        # signature: camera, start_time, end_time, duration, cache_path,
+        # store_mode, stream_quality
+        self.assertEqual(args[6], "main")
+
+
+class TestRecordingRowIsMainFallback(unittest.TestCase):
+    """Reader-side defensive fallback: ``recording_row_is_main`` must detect
+    main-quality rows even when ``stream_quality`` is mis-tagged as "sub",
+    by inspecting the ``_main.mp4`` path suffix. This provides backward
+    compatibility for rows inserted before the maintainer was corrected."""
+
+    def _row(self, stream_quality, path):
+        r = MagicMock()
+        r.stream_quality = stream_quality
+        r.path = path
+        return r
+
+    def test_detects_main_via_stream_quality_column(self):
+        from frigate.api.media import recording_row_is_main
+
+        self.assertTrue(
+            recording_row_is_main(
+                self._row("main", "/media/frigate/recordings/back/00.00.mp4")
+            )
+        )
+
+    def test_detects_main_via_path_suffix_when_column_wrong(self):
+        from frigate.api.media import recording_row_is_main
+
+        # Row that an older-revision maintainer would have inserted: the
+        # file is clearly main (the ``_main.mp4`` suffix comes from
+        # move_segment) but the column got the default "sub".
+        self.assertTrue(
+            recording_row_is_main(
+                self._row(
+                    "sub",
+                    "/media/frigate/recordings/2026-01-01/12/back/34.56_main.mp4",
+                )
+            )
+        )
+
+    def test_sub_row_without_suffix_is_not_main(self):
+        from frigate.api.media import recording_row_is_main
+
+        self.assertFalse(
+            recording_row_is_main(
+                self._row(
+                    "sub",
+                    "/media/frigate/recordings/2026-01-01/12/back/34.56.mp4",
+                )
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
