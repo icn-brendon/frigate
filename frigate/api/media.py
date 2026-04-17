@@ -72,6 +72,134 @@ def recording_row_is_main(row) -> bool:
     return bool(path) and path.endswith("_main.mp4")
 
 
+def build_unified_vod_timeline(
+    main_rows: list,
+    sub_rows: list,
+    after: float,
+    before: float,
+) -> list[dict]:
+    """Build a non-overlapping unified clip timeline for nginx-vod-module.
+
+    Main clips (~2s event bursts) rarely fully contain sub clips (~4s
+    continuous), so a "drop sub when fully covered by main" filter leaves
+    overlapping intervals in the playlist. nginx-vod-module requires
+    monotonic non-overlapping clip times; overlaps produce 400 responses
+    on segment fetches.
+
+    For each moment in ``[after, before]`` we prefer main coverage and fall
+    back to sub. Each emitted clip is trimmed to the portion of its source
+    file that lands in its owning slice of the timeline, so adjacent clips
+    never share a wall-clock instant.
+
+    Returns a list of dicts in time order, each with:
+        ``row``: the owning Recordings row (for path lookup / keyframe snap)
+        ``trim_start_wall``: wall-clock start of the emitted slice
+        ``trim_end_wall``: wall-clock end of the emitted slice
+        ``clip_from_ms``: offset into the source file (ms)
+        ``duration_ms``: trimmed duration (ms)
+    """
+
+    def _row_start(r):
+        return float(r.start_time)
+
+    def _row_end(r):
+        return float(r.end_time)
+
+    def _row_file_duration_ms(r):
+        # Prefer the stored duration (the file may run slightly past end_time
+        # or end_time may have been clamped); fall back to end-start.
+        dur = getattr(r, "duration", None)
+        if dur is not None:
+            return int(float(dur) * 1000)
+        return int((_row_end(r) - _row_start(r)) * 1000)
+
+    def _emit(row, trim_start_wall, trim_end_wall):
+        if trim_end_wall <= trim_start_wall:
+            return None
+        file_start = _row_start(row)
+        clip_from_ms = int(round((trim_start_wall - file_start) * 1000))
+        if clip_from_ms < 0:
+            clip_from_ms = 0
+        duration_ms = int(round((trim_end_wall - trim_start_wall) * 1000))
+        # Never ask nginx-vod to read past the end of the source file.
+        file_duration_ms = _row_file_duration_ms(row)
+        if clip_from_ms + duration_ms > file_duration_ms:
+            duration_ms = file_duration_ms - clip_from_ms
+        if duration_ms <= 0:
+            return None
+        return {
+            "row": row,
+            "trim_start_wall": trim_start_wall,
+            "trim_end_wall": trim_end_wall,
+            "clip_from_ms": clip_from_ms,
+            "duration_ms": duration_ms,
+        }
+
+    # --- Build merged main intervals, each tied to the best owning row ---
+    # Many main rows can be adjacent/overlapping. We split the wall-clock
+    # range into sub-intervals where a single chosen row owns each slice,
+    # picking the row that contains the slice. Simpler: emit one clip per
+    # main row, trimmed to [max(row_start, prev_end), row_end] so two
+    # overlapping main rows never double-up.
+    main_sorted = sorted(main_rows, key=_row_start)
+    main_emissions: list[dict] = []
+    prev_main_end_wall = after
+    merged_main_intervals: list[list[float]] = []  # for gap detection
+    for row in main_sorted:
+        row_start = _row_start(row)
+        row_end = _row_end(row)
+        trim_start = max(row_start, prev_main_end_wall, after)
+        trim_end = min(row_end, before)
+        clip = _emit(row, trim_start, trim_end)
+        if clip is not None:
+            main_emissions.append(clip)
+            prev_main_end_wall = max(prev_main_end_wall, trim_end)
+        # Build merged intervals (clipped to the requested window) for sub
+        # gap-filling.
+        mi_start = max(row_start, after)
+        mi_end = min(row_end, before)
+        if mi_end > mi_start:
+            if merged_main_intervals and mi_start <= merged_main_intervals[-1][1]:
+                merged_main_intervals[-1][1] = max(
+                    merged_main_intervals[-1][1], mi_end
+                )
+            else:
+                merged_main_intervals.append([mi_start, mi_end])
+
+    # --- Compute gaps (windows with no main coverage) within [after, before] ---
+    gaps: list[tuple[float, float]] = []
+    cursor = after
+    for ms, me in merged_main_intervals:
+        if ms > cursor:
+            gaps.append((cursor, ms))
+        cursor = max(cursor, me)
+    if cursor < before:
+        gaps.append((cursor, before))
+
+    # --- Fill each gap with sub rows, trimming sub clips to the gap bounds
+    # and to each other so sub clips are also non-overlapping within a gap.
+    sub_sorted = sorted(sub_rows, key=_row_start)
+    sub_emissions: list[dict] = []
+    for gap_start, gap_end in gaps:
+        prev_sub_end = gap_start
+        for row in sub_sorted:
+            row_start = _row_start(row)
+            row_end = _row_end(row)
+            if row_end <= gap_start or row_start >= gap_end:
+                continue
+            trim_start = max(row_start, prev_sub_end, gap_start)
+            trim_end = min(row_end, gap_end)
+            clip = _emit(row, trim_start, trim_end)
+            if clip is not None:
+                sub_emissions.append(clip)
+                prev_sub_end = max(prev_sub_end, trim_end)
+
+    # --- Merge main + sub emissions in time order ---
+    all_emissions = main_emissions + sub_emissions
+    all_emissions.sort(key=lambda c: c["trim_start_wall"])
+    return all_emissions
+
+
 router = APIRouter(tags=[Tags.media])
 
 
@@ -618,74 +746,47 @@ async def vod_ts(
     if stream_quality == "main":
         all_rows = list(recordings_query)
         main_rows = [r for r in all_rows if recording_row_is_main(r)]
-
-        # Build merged main coverage intervals for fast containment check.
-        main_intervals: list[list[float]] = []
-        for r in sorted(main_rows, key=lambda x: x.start_time):
-            if main_intervals and r.start_time <= main_intervals[-1][1]:
-                main_intervals[-1][1] = max(main_intervals[-1][1], r.end_time)
-            else:
-                main_intervals.append([r.start_time, r.end_time])
-
-        def _fully_covered_by_main(s: float, e: float) -> bool:
-            for ms, me in main_intervals:
-                if ms <= s and me >= e:
-                    return True
-                if ms > s:
-                    break
-            return False
-
-        filtered = []
-        for r in all_rows:
-            if recording_row_is_main(r):
-                filtered.append(r)
-            else:
-                # keep sub only where it is not fully shadowed by main coverage
-                if not _fully_covered_by_main(r.start_time, r.end_time):
-                    filtered.append(r)
-
-        filtered.sort(key=lambda x: x.start_time)
-        recordings = iter(filtered)
+        sub_rows = [r for r in all_rows if not recording_row_is_main(r)]
+        emissions = build_unified_vod_timeline(
+            main_rows, sub_rows, start_ts, end_ts
+        )
     else:
-        recordings = recordings_query.iterator()
+        # Single-quality path: treat every row as "main" so the timeline
+        # builder produces non-overlapping clips trimmed to [start_ts, end_ts].
+        all_rows = list(recordings_query)
+        emissions = build_unified_vod_timeline(all_rows, [], start_ts, end_ts)
 
     clips = []
     durations = []
     min_duration_ms = 100  # Minimum 100ms to ensure at least one video frame
     max_duration_ms = MAX_SEGMENT_DURATION * 1000
 
-    recording: Recordings
-    for recording in recordings:
+    for emission in emissions:
+        recording = emission["row"]
+        clip_from_ms = emission["clip_from_ms"]
+        duration = emission["duration_ms"]
+
         logger.debug(
-            "VOD: processing recording: %s start=%s end=%s duration=%s",
+            "VOD: processing emission: %s start=%s end=%s clip_from_ms=%s duration_ms=%s",
             recording.path,
-            recording.start_time,
-            recording.end_time,
-            recording.duration,
+            emission["trim_start_wall"],
+            emission["trim_end_wall"],
+            clip_from_ms,
+            duration,
         )
 
         clip = {"type": "source", "path": recording.path}
-        duration = int(recording.duration * 1000)
-
-        # adjust start offset if start_ts is after recording.start_time
-        if start_ts > recording.start_time:
-            inpoint = int((start_ts - recording.start_time) * 1000)
-            clip["clipFrom"] = inpoint
-            duration -= inpoint
-            logger.debug(
-                "VOD: applied clipFrom %sms to %s",
-                inpoint,
-                recording.path,
-            )
-
-        # adjust end if recording.end_time is after end_ts
-        if recording.end_time > end_ts:
-            duration -= int((recording.end_time - end_ts) * 1000)
+        if clip_from_ms > 0:
+            clip["clipFrom"] = clip_from_ms
 
         # nginx-vod-module pushes clipFrom forward to the next keyframe,
         # which can leave too few frames and produce an empty/unplayable
         # segment. Snap clipFrom back to the preceding keyframe so the
-        # segment always starts with a decodable frame.
+        # segment always starts with a decodable frame. Note: we only
+        # extend the clip BACKWARDS in the source file; the emitted
+        # wall-clock window still ends at trim_end_wall, so extending
+        # clipFrom earlier grows duration without creating wall-clock
+        # overlap with neighbouring clips.
         if "clipFrom" in clip:
             keyframe_ms = get_keyframe_before(recording.path, clip["clipFrom"])
             if keyframe_ms is not None:
@@ -699,15 +800,14 @@ async def vod_ts(
                     duration,
                 )
             else:
-                # could not read keyframes, remove clipFrom to use full recording
+                # could not read keyframes; keep the computed clipFrom so we
+                # still honour the trim (dropping clipFrom would re-introduce
+                # overlap with the preceding clip in the unified timeline).
                 logger.debug(
-                    "VOD: no keyframe info for %s, removing clipFrom to use full recording",
+                    "VOD: no keyframe info for %s, keeping computed clipFrom=%sms",
                     recording.path,
+                    clip["clipFrom"],
                 )
-                del clip["clipFrom"]
-                duration = int(recording.duration * 1000)
-                if recording.end_time > end_ts:
-                    duration -= int((recording.end_time - end_ts) * 1000)
 
         if duration < min_duration_ms:
             # skip if the clip has no valid duration (too short to contain frames)
