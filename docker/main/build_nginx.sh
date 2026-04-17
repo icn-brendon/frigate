@@ -35,7 +35,7 @@ wget -nv https://github.com/kaltura/nginx-vod-module/archive/refs/tags/${VOD_MOD
 tar -zxf ${VOD_MODULE_VERSION}.tar.gz -C /tmp/nginx-vod-module --strip-components=1
 rm ${VOD_MODULE_VERSION}.tar.gz
     # Patch MAX_CLIPS to allow more clips to be added than the default 128
-sed -i 's/MAX_CLIPS (128)/MAX_CLIPS (1080)/g' /tmp/nginx-vod-module/vod/media_set.h
+sed -i 's/MAX_CLIPS (128)/MAX_CLIPS (8192)/g' /tmp/nginx-vod-module/vod/media_set.h
 patch -d /tmp/nginx-vod-module/ -p1 << 'EOF'
 --- a/vod/avc_hevc_parser.c       2022-06-27 11:38:10.000000000 +0000
 +++ b/vod/avc_hevc_parser.c       2023-01-16 11:25:10.900521298 +0000

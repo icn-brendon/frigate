@@ -24,9 +24,34 @@ RUN npm run build \
     && rm -rf dist/BASE_PATH
 
 # ---------------------------------------------------------------------------
-# Stage 2: overlay onto upstream base image
+# Stage 2: rebuild nginx with MAX_CLIPS=8192 for dual-stream long VOD ranges
+# ---------------------------------------------------------------------------
+# Upstream stable-rocm ships nginx-vod-module compiled with MAX_CLIPS=1080.
+# Reolink substreams with ~2s segments (max I-frame interval) produce
+# ~1500-1800 clips for a 1-hour VOD request, exceeding that limit and
+# returning 503. Rebuild nginx with the higher limit so dual-stream
+# deployments with short-GOP cameras can serve long ranges.
+#
+# Matches upstream docker/main/Dockerfile's nginx stage (debian:12).
+FROM debian:12 AS nginx-build
+ARG DEBIAN_FRONTEND=noninteractive
+ENV CCACHE_DIR=/root/.ccache
+ENV CCACHE_MAXSIZE=2G
+
+# Copy upstream build script and run it. The script itself already bumps
+# MAX_CLIPS to 8192 in this fork; the sed below is a defensive no-op so
+# the overlay still produces 8192 if the base script is ever reverted.
+COPY docker/main/build_nginx.sh /deps/build_nginx.sh
+RUN sed -i -E 's/MAX_CLIPS \(1080\)/MAX_CLIPS (8192)/g' /deps/build_nginx.sh \
+    && /deps/build_nginx.sh
+
+# ---------------------------------------------------------------------------
+# Stage 3: overlay onto upstream base image
 # ---------------------------------------------------------------------------
 FROM ${BASE_IMAGE}
+
+# Replace nginx binary with our MAX_CLIPS=8192 build
+COPY --from=nginx-build /usr/local/nginx/sbin/nginx /usr/local/nginx/sbin/nginx
 
 # Overwrite Python source and migrations with our fork's versions
 COPY frigate/ /opt/frigate/frigate/
