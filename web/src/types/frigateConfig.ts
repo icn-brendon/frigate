@@ -160,6 +160,8 @@ export interface CameraConfig {
         min_ratio: number;
         min_score: number;
         threshold: number;
+        stationary_trigger_recording: boolean;
+        stationary_recording_threshold: number | null;
       };
     };
     mask: {
@@ -561,6 +563,8 @@ export interface FrigateConfig {
         min_ratio: number;
         min_score: number;
         threshold: number;
+        stationary_trigger_recording: boolean;
+        stationary_recording_threshold: number | null;
       };
     };
     mask: string[];

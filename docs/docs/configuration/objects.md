@@ -111,6 +111,34 @@ cameras:
 </TabItem>
 </ConfigTabs>
 
+## Stationary event recording
+
+When mainstream [event recording](record.md#event-recording-main-stream) is enabled, every tracked object that qualifies as an alert or detection triggers the ring buffer to persist. A parked car or a stationary bin would otherwise hold the main stream open for hours. Two per-filter fields control this:
+
+| Field                            | Default | Description                                                                                                                                                                        |
+| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stationary_trigger_recording`   | `True`  | When `False`, stationary instances of this object type do not trigger mainstream event recording. Moving instances still trigger as normal.                                        |
+| `stationary_recording_threshold` | `None`  | Seconds an object must be motionless before it stops triggering mainstream event recording. Capped at 300. When unset, falls back to the frame-based `detect.stationary.threshold`. |
+
+Both fields only affect mainstream event recording. They do not change object tracking, snapshots, or substream retention.
+
+<ConfigTabs>
+<TabItem value="yaml">
+
+```yaml
+objects:
+  filters:
+    car:
+      # A parked car should not keep the main stream recording.
+      stationary_trigger_recording: False
+    person:
+      # Keep recording a motionless person for 60s before treating them as stationary.
+      stationary_recording_threshold: 60
+```
+
+</TabItem>
+</ConfigTabs>
+
 ## Object Filter Masks
 
 Object filter masks prevent specific object types from being detected in certain areas of the camera frame. These masks check the bottom center of the bounding box. A global mask applies to all object types, while per-object masks apply only to the specified type.
