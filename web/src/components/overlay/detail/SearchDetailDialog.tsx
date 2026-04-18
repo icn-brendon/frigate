@@ -1928,17 +1928,34 @@ export function VideoTab({ search }: VideoTabProps) {
 
   // Tracked items correspond to event-trigger windows; the dual-stream
   // feature captures mainstream (HD) around these windows. Probe whether
-  // a main-quality VOD playlist is available for this range and prefer
-  // it; fall back to the default (sub) playlist if no main segments
-  // cover the event.
+  // a main-quality recording covers this range and prefer it; fall back
+  // to the default (sub) playlist otherwise.
+  //
+  // Probe via the /recordings/main_availability API (served under
+  // /api/...) rather than hitting /vod/... directly: the nginx `/vod/`
+  // location is handled by nginx-vod-module and only answers valid HLS
+  // requests (master.m3u8/index.m3u8/.ts/.m4s), so a bare quality-path
+  // probe never reaches the Python backend and would always report
+  // unavailable.
   const [useMain, setUseMain] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
     setUseMain(null);
+    const after = search.start_time - REVIEW_PADDING;
+    const before = (search.end_time ?? Date.now() / 1000) + REVIEW_PADDING;
     axios
-      .get(`${baseUrl}vod/${search.camera}/${clipTimeRange}/quality/main`)
-      .then(() => {
-        if (!cancelled) setUseMain(true);
+      .get(`${search.camera}/recordings/main_availability`, {
+        params: { after, before },
+      })
+      .then((resp) => {
+        if (cancelled) return;
+        const ranges: { start_time: number; end_time: number }[] =
+          resp.data?.ranges ?? [];
+        // Any overlap with the event window means HD is available.
+        const hasOverlap = ranges.some(
+          (r) => r.end_time >= after && r.start_time <= before,
+        );
+        setUseMain(hasOverlap);
       })
       .catch(() => {
         if (!cancelled) setUseMain(false);
@@ -1946,7 +1963,7 @@ export function VideoTab({ search }: VideoTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [search.camera, clipTimeRange]);
+  }, [search.camera, search.start_time, search.end_time]);
 
   if (useMain === null) {
     return (

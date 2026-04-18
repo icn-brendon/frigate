@@ -198,12 +198,30 @@ export default function LiveCameraView({
   }, [liveQuality, hasMainStream, mainStreamName, streamName]);
 
   const isRestreamed = useMemo(
-    () =>
-      config &&
-      Object.keys(config.go2rtc.streams || {}).includes(
-        effectiveStreamName ?? "",
-      ),
-    [config, effectiveStreamName],
+    () => {
+      if (!config) return false;
+      if (
+        Object.keys(config.go2rtc.streams || {}).includes(
+          effectiveStreamName ?? "",
+        )
+      ) {
+        return true;
+      }
+      // The `<camera>_main` stream is auto-registered in go2rtc by
+      // docker/main/rootfs/usr/local/go2rtc/create_config.py but is not
+      // surfaced in Frigate's config.go2rtc.streams. Treat it as restreamed
+      // when the HD toggle is active so we use MSE/WebRTC rather than
+      // falling back to JSMpeg (which ignores the selected streamName).
+      if (
+        liveQuality === "main" &&
+        hasMainStream &&
+        effectiveStreamName === mainStreamName
+      ) {
+        return true;
+      }
+      return false;
+    },
+    [config, effectiveStreamName, liveQuality, hasMainStream, mainStreamName],
   );
 
   // validate stored stream name and reset if now invalid
@@ -613,6 +631,31 @@ export default function LiveCameraView({
                   </div>
                 )}
               </Button>
+              {isMobile && hasMainStream && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
+                      aria-label="Toggle live stream quality"
+                      size="sm"
+                      variant={liveQuality === "main" ? "select" : "default"}
+                      onClick={() =>
+                        setLiveQuality(
+                          liveQuality === "main" ? "sub" : "main",
+                        )
+                      }
+                      disabled={!cameraEnabled || debug}
+                    >
+                      <span>{liveQuality === "main" ? "HD" : "SD"}</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {liveQuality === "main"
+                      ? "Playing mainstream (HD) — click for substream"
+                      : "Playing substream (SD) — click for mainstream"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
           ) : (
             <div />
@@ -707,7 +750,7 @@ export default function LiveCameraView({
                 disabled={!cameraEnabled || debug}
               />
             )}
-            {hasMainStream && (
+            {!isMobile && hasMainStream && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
