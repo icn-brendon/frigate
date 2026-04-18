@@ -39,6 +39,11 @@ ARG DEBIAN_FRONTEND
 ENV CCACHE_DIR /root/.ccache
 ENV CCACHE_MAXSIZE 2G
 
+# Allow overriding the compile-time MAX_CLIPS cap in nginx-vod-module at
+# build time. The default of 1080 matches the previous hard-coded value.
+ARG NGINX_VOD_MAX_CLIPS=1080
+ENV NGINX_VOD_MAX_CLIPS=${NGINX_VOD_MAX_CLIPS}
+
 RUN --mount=type=bind,source=docker/main/build_nginx.sh,target=/deps/build_nginx.sh \
     /deps/build_nginx.sh
 
