@@ -202,7 +202,11 @@ export function MotionSegment({
           onTouchEnd={(event) => handleTouchStart(event, segmentClick)}
         >
           {hasMainStream && (
-            <div className="absolute right-0 top-0 h-full w-[3px] bg-selected/70" />
+            <div
+              className="absolute right-0 top-0 h-full w-[3px] bg-selected/70"
+              title="HD footage available"
+              aria-label="HD footage available"
+            />
           )}
           {isFirstSegmentWithoutRecording && (
             <div className="absolute bottom-[0px] left-0 right-0 h-[1px] bg-primary-variant/40" />

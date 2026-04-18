@@ -95,7 +95,7 @@ import { PiSlidersHorizontalBold } from "react-icons/pi";
 import { HiSparkles } from "react-icons/hi";
 import { useAudioTranscriptionProcessState } from "@/api/ws";
 
-const SEARCH_TABS = ["snapshot", "tracking_details"] as const;
+const SEARCH_TABS = ["snapshot", "video", "tracking_details"] as const;
 export type SearchTab = (typeof SEARCH_TABS)[number];
 
 type TabsWithActionsProps = {
@@ -161,7 +161,9 @@ function TabsWithActions({
                     ? search?.has_snapshot
                       ? t("type.snapshot")
                       : t("type.thumbnail")
-                    : t(`type.${item}`)}
+                    : item === "video"
+                      ? t("type.video")
+                      : t(`type.${item}`)}
                 </div>
               </ToggleGroupItem>
             ))}
@@ -344,6 +346,56 @@ function DialogContentComponent({
     );
   }
 
+  if (page === "video") {
+    if (isDesktop) {
+      return (
+        <div className="grid h-full w-full grid-cols-[60%_40%] gap-4">
+          <div className="scrollbar-container min-w-0 overflow-y-auto overflow-x-hidden">
+            <VideoTab search={search} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-4 pr-2">
+            <TabsWithActions
+              search={search}
+              searchTabs={searchTabs}
+              pageToggle={pageToggle}
+              setPageToggle={setPageToggle}
+              config={config}
+              setSearch={setSearch}
+              setSimilarity={setSimilarity}
+              isPopoverOpen={isPopoverOpen}
+              setIsPopoverOpen={setIsPopoverOpen}
+              dialogContainer={dialogContainer}
+            />
+            <div className="scrollbar-container min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4">
+              <ObjectDetailsTab
+                search={search}
+                config={config}
+                setSearch={setSearch}
+                setInputFocused={setInputFocused}
+                setShowNavigationButtons={setShowNavigationButtons}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div className="mb-4 w-full">
+          <VideoTab search={search} />
+        </div>
+        <ObjectDetailsTab
+          search={search}
+          config={config}
+          setSearch={setSearch}
+          setInputFocused={setInputFocused}
+          setShowNavigationButtons={setShowNavigationButtons}
+        />
+      </>
+    );
+  }
+
   // Snapshot page content
   const snapshotElement = search.has_snapshot ? (
     <ObjectSnapshotTab
@@ -515,8 +567,14 @@ export default function SearchDetailDialog({
     const views = [...SEARCH_TABS];
 
     if (!search.has_clip) {
-      const index = views.indexOf("tracking_details");
-      views.splice(index, 1);
+      const trackingIndex = views.indexOf("tracking_details");
+      if (trackingIndex !== -1) {
+        views.splice(trackingIndex, 1);
+      }
+      const videoIndex = views.indexOf("video");
+      if (videoIndex !== -1) {
+        views.splice(videoIndex, 1);
+      }
     }
 
     return views;

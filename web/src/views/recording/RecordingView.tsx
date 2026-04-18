@@ -49,6 +49,14 @@ import { TimeRange, TimelineType } from "@/types/timeline";
 import MobileCameraDrawer from "@/components/overlay/MobileCameraDrawer";
 import MobileTimelineDrawer from "@/components/overlay/MobileTimelineDrawer";
 import MobileReviewSettingsDrawer from "@/components/overlay/MobileReviewSettingsDrawer";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { FiMoreVertical } from "react-icons/fi";
 import Logo from "@/components/Logo";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FaVideo } from "react-icons/fa";
@@ -667,91 +675,136 @@ export function RecordingView({
               onSelectCamera={onSelectCamera}
             />
             {isDesktop && (
-              <DebugReplayDialog
-                camera={mainCamera}
-                currentTime={currentTime}
-                latestTime={timeRange.before}
-                mode={debugReplayMode}
-                range={debugReplayRange}
-                setRange={(range: TimeRange | undefined) => {
-                  setDebugReplayRange(range);
+              <div className="hidden items-center gap-2 lg:flex">
+                <DebugReplayDialog
+                  camera={mainCamera}
+                  currentTime={currentTime}
+                  latestTime={timeRange.before}
+                  mode={debugReplayMode}
+                  range={debugReplayRange}
+                  setRange={(range: TimeRange | undefined) => {
+                    setDebugReplayRange(range);
 
-                  if (range != undefined) {
-                    mainControllerRef.current?.pause();
-                  }
-                }}
-                setMode={setDebugReplayMode}
-              />
-            )}
-            {isDesktop && (
-              <ExportDialog
-                camera={mainCamera}
-                currentTime={currentTime}
-                latestTime={timeRange.before}
-                mode={exportMode}
-                range={exportRange}
-                showPreview={showExportPreview}
-                setRange={(range) => {
-                  setExportRange(range);
+                    if (range != undefined) {
+                      mainControllerRef.current?.pause();
+                    }
+                  }}
+                  setMode={setDebugReplayMode}
+                />
+                <ExportDialog
+                  camera={mainCamera}
+                  currentTime={currentTime}
+                  latestTime={timeRange.before}
+                  mode={exportMode}
+                  range={exportRange}
+                  showPreview={showExportPreview}
+                  setRange={(range) => {
+                    setExportRange(range);
 
-                  if (range != undefined) {
-                    mainControllerRef.current?.pause();
-                  }
-                }}
-                setMode={setExportMode}
-                setShowPreview={setShowExportPreview}
-              />
+                    if (range != undefined) {
+                      mainControllerRef.current?.pause();
+                    }
+                  }}
+                  setMode={setExportMode}
+                  setShowPreview={setShowExportPreview}
+                />
+                <ReviewFilterGroup
+                  filters={["cameras", "date", "general"]}
+                  reviewSummary={reviewSummary}
+                  recordingsSummary={recordingsSummary}
+                  filter={filter}
+                  motionOnly={false}
+                  filterList={reviewFilterList}
+                  showReviewed
+                  setShowReviewed={() => {}}
+                  mainCamera={mainCamera}
+                  onUpdateFilter={(newFilter: ReviewFilter) => {
+                    const updatedCameras =
+                      newFilter.cameras === undefined
+                        ? undefined // Respect undefined as "all cameras"
+                        : newFilter.cameras
+                          ? Array.from(
+                              new Set([
+                                mainCamera,
+                                ...(newFilter.cameras || []),
+                              ]),
+                            ) // Include mainCamera if specific cameras are selected
+                          : [mainCamera];
+                    const adjustedFilter: ReviewFilter = {
+                      ...newFilter,
+                      cameras: updatedCameras,
+                    };
+                    updateFilter(adjustedFilter);
+                  }}
+                  setMotionOnly={() => {}}
+                />
+                <ActionsDropdown
+                  onDebugReplayClick={() => {
+                    const now = new Date(timeRange.before * 1000);
+                    now.setHours(now.getHours() - 1);
+                    setDebugReplayRange({
+                      after: now.getTime() / 1000,
+                      before: timeRange.before,
+                    });
+                    setDebugReplayMode("select");
+                  }}
+                  onExportClick={() => {
+                    const now = new Date(timeRange.before * 1000);
+                    now.setHours(now.getHours() - 1);
+                    setExportRange({
+                      before: timeRange.before,
+                      after: now.getTime() / 1000,
+                    });
+                    setExportMode("select");
+                  }}
+                />
+              </div>
             )}
             {isDesktop && (
-              <ReviewFilterGroup
-                filters={["cameras", "date", "general"]}
-                reviewSummary={reviewSummary}
-                recordingsSummary={recordingsSummary}
-                filter={filter}
-                motionOnly={false}
-                filterList={reviewFilterList}
-                showReviewed
-                setShowReviewed={() => {}}
-                mainCamera={mainCamera}
-                onUpdateFilter={(newFilter: ReviewFilter) => {
-                  const updatedCameras =
-                    newFilter.cameras === undefined
-                      ? undefined // Respect undefined as "all cameras"
-                      : newFilter.cameras
-                        ? Array.from(
-                            new Set([mainCamera, ...(newFilter.cameras || [])]),
-                          ) // Include mainCamera if specific cameras are selected
-                        : [mainCamera];
-                  const adjustedFilter: ReviewFilter = {
-                    ...newFilter,
-                    cameras: updatedCameras,
-                  };
-                  updateFilter(adjustedFilter);
-                }}
-                setMotionOnly={() => {}}
-              />
-            )}
-            {isDesktop && (
-              <ActionsDropdown
-                onDebugReplayClick={() => {
-                  const now = new Date(timeRange.before * 1000);
-                  now.setHours(now.getHours() - 1);
-                  setDebugReplayRange({
-                    after: now.getTime() / 1000,
-                    before: timeRange.before,
-                  });
-                  setDebugReplayMode("select");
-                }}
-                onExportClick={() => {
-                  const now = new Date(timeRange.before * 1000);
-                  now.setHours(now.getHours() - 1);
-                  setExportRange({
-                    before: timeRange.before,
-                    after: now.getTime() / 1000,
-                  });
-                  setExportMode("select");
-                }}
-              />
+              <div className="flex lg:hidden">
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className="flex items-center gap-1 rounded-lg"
+                      aria-label="More toolbar actions"
+                      size="sm"
+                    >
+                      <FiMoreVertical className="size-5 text-secondary-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>
+                      {t("menu.actions", { ns: "common" })}
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const now = new Date(timeRange.before * 1000);
+                        now.setHours(now.getHours() - 1);
+                        setExportRange({
+                          before: timeRange.before,
+                          after: now.getTime() / 1000,
+                        });
+                        setExportMode("select");
+                      }}
+                    >
+                      {t("menu.export", { ns: "common" })}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const now = new Date(timeRange.before * 1000);
+                        now.setHours(now.getHours() - 1);
+                        setDebugReplayRange({
+                          after: now.getTime() / 1000,
+                          before: timeRange.before,
+                        });
+                        setDebugReplayMode("select");
+                      }}
+                    >
+                      {t("title", { ns: "views/replay" })}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             )}
             {isDesktop ? (
               <ToggleGroup
