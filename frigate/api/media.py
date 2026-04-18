@@ -57,6 +57,16 @@ from frigate.util.media import get_keyframe_before
 logger = logging.getLogger(__name__)
 
 
+def recording_row_is_main(row) -> bool:
+    """Return True if a Recordings row represents a main-quality segment.
+
+    Migration 036 backfills legacy rows to ``stream_quality='sub'`` and the
+    maintainer tags every new ``_main.mp4`` segment as ``'main'`` on insert,
+    so the column alone is authoritative.
+    """
+    return getattr(row, "stream_quality", None) == "main"
+
+
 router = APIRouter(tags=[Tags.media])
 
 
@@ -552,20 +562,39 @@ async def vod_ts(
     start_ts: float,
     end_ts: float,
     force_discontinuity: bool = False,
+    stream_quality: str = "sub",
 ):
     logger.debug(
-        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s",
+        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
         camera_name,
         start_ts,
         end_ts,
         force_discontinuity,
+        stream_quality,
     )
-    recordings = (
+    # quality=sub (default): continuous sub-quality recording.
+    # quality=main: main-quality event clips only. nginx-vod concatenates
+    # them sequentially - gaps between events simply don't appear in the
+    # playlist, so playback is an HD-only highlights reel. The UI uses
+    # /main_availability to know which time ranges have HD.
+    #
+    # Migration 036 backfills legacy rows to 'sub' and the maintainer tags
+    # every new main segment on insert, so the stream_quality column is
+    # authoritative and needs no path-column fallback.
+    if stream_quality == "main":
+        quality_filter = Recordings.stream_quality == "main"
+    else:
+        quality_filter = (Recordings.stream_quality == "sub") | (
+            Recordings.stream_quality.is_null()
+        )
+
+    recordings_query = (
         Recordings.select(
             Recordings.path,
             Recordings.duration,
             Recordings.end_time,
             Recordings.start_time,
+            Recordings.stream_quality,
         )
         .where(
             Recordings.start_time.between(start_ts, end_ts)
@@ -573,8 +602,8 @@ async def vod_ts(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        .where(quality_filter)
         .order_by(Recordings.start_time.asc())
-        .iterator()
     )
 
     clips = []
@@ -583,7 +612,7 @@ async def vod_ts(
     max_duration_ms = MAX_SEGMENT_DURATION * 1000
 
     recording: Recordings
-    for recording in recordings:
+    for recording in recordings_query.iterator():
         logger.debug(
             "VOD: processing recording: %s start=%s end=%s duration=%s",
             recording.path,
@@ -685,6 +714,20 @@ async def vod_ts(
 
 
 @router.get(
+    "/vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}",
+    dependencies=[Depends(require_camera_access)],
+    description="Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.",
+)
+async def vod_ts_with_quality(
+    camera_name: str,
+    start_ts: float,
+    end_ts: float,
+    quality: str,
+):
+    return await vod_ts(camera_name, start_ts, end_ts, stream_quality=quality)
+
+
+@router.get(
     "/vod/{year_month}/{day}/{hour}/{camera_name}",
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified date-time on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
@@ -702,7 +745,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
     description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_hour(
-    year_month: str, day: int, hour: int, camera_name: str, tz_name: str
+    year_month: str,
+    day: int,
+    hour: int,
+    camera_name: str,
+    tz_name: str,
+    quality: str = Query("sub", description="Stream quality: sub or main"),
 ):
     parts = year_month.split("-")
     start_date = (
@@ -713,7 +761,7 @@ async def vod_hour(
     start_ts = start_date.timestamp()
     end_ts = end_date.timestamp()
 
-    return await vod_ts(camera_name, start_ts, end_ts)
+    return await vod_ts(camera_name, start_ts, end_ts, stream_quality=quality)
 
 
 @router.get(
@@ -768,8 +816,11 @@ async def vod_clip(
     camera_name: str,
     start_ts: float,
     end_ts: float,
+    quality: str = Query("sub", description="Stream quality: sub or main"),
 ):
-    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
+    return await vod_ts(
+        camera_name, start_ts, end_ts, force_discontinuity=True, stream_quality=quality
+    )
 
 
 @router.get(

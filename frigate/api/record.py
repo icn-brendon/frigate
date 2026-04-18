@@ -169,6 +169,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
                 (Recordings.camera == camera_name)
                 & (Recordings.end_time >= period_start)
                 & (Recordings.start_time <= period_end)
+                & (Recordings.stream_quality == "sub")
             )
             .group_by((Recordings.start_time + period_offset).cast("int") / 3600)
             .order_by(Recordings.start_time.desc())
@@ -229,6 +230,7 @@ async def recordings(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
+    quality: str = "sub",
 ):
     """Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used"""
     recordings = (
@@ -241,11 +243,13 @@ async def recordings(
             Recordings.objects,
             Recordings.motion_heatmap,
             Recordings.duration,
+            Recordings.stream_quality,
         )
         .where(
             Recordings.camera == camera_name,
             Recordings.end_time >= after,
             Recordings.start_time <= before,
+            Recordings.stream_quality == quality,
         )
         .order_by(Recordings.start_time)
         .dicts()
@@ -253,6 +257,76 @@ async def recordings(
     )
 
     return JSONResponse(content=list(recordings))
+
+
+# Maximum allowed [after, before] span for /main_availability, in seconds.
+# The UI calls this per-day, so a 7-day cap is well above any legitimate
+# request and blocks a user from asking for a year-wide timeline (which
+# would scan every main row for the camera).
+MAIN_AVAILABILITY_MAX_WINDOW_SECONDS = 7 * 24 * 60 * 60
+# Hard cap on the number of rows returned in a single response. Protects
+# the API event loop when a misconfigured camera has produced an
+# implausibly large number of tiny main segments.
+MAIN_AVAILABILITY_MAX_ROWS = 10_000
+
+
+@router.get(
+    "/{camera_name}/recordings/main_availability",
+    dependencies=[Depends(require_camera_access)],
+)
+async def main_stream_availability(
+    camera_name: str,
+    after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
+    before: float = datetime.now().timestamp(),
+):
+    """Return time ranges where main stream recordings are available.
+
+    Bounded by a maximum time window and a maximum row count. Responses
+    include a ``truncated`` flag so clients can detect when the row cap was
+    hit and narrow their window.
+    """
+    if before <= after:
+        return JSONResponse(
+            content={"success": False, "message": "before must be > after"},
+            status_code=400,
+        )
+    if (before - after) > MAIN_AVAILABILITY_MAX_WINDOW_SECONDS:
+        return JSONResponse(
+            content={
+                "success": False,
+                "message": (
+                    f"Requested window exceeds maximum of "
+                    f"{MAIN_AVAILABILITY_MAX_WINDOW_SECONDS} seconds"
+                ),
+            },
+            status_code=400,
+        )
+
+    # Uses the (camera, start_time) DB index via the ORM's compound WHERE.
+    # LIMIT is applied +1 so we can detect truncation without an extra
+    # COUNT(*) pass.
+    query = (
+        Recordings.select(
+            Recordings.start_time,
+            Recordings.end_time,
+        )
+        .where(
+            Recordings.camera == camera_name,
+            Recordings.end_time >= after,
+            Recordings.start_time <= before,
+            Recordings.stream_quality == "main",
+        )
+        .order_by(Recordings.start_time)
+        .limit(MAIN_AVAILABILITY_MAX_ROWS + 1)
+        .dicts()
+    )
+
+    rows = list(query)
+    truncated = len(rows) > MAIN_AVAILABILITY_MAX_ROWS
+    if truncated:
+        rows = rows[:MAIN_AVAILABILITY_MAX_ROWS]
+
+    return JSONResponse(content={"ranges": rows, "truncated": truncated})
 
 
 @router.get(
