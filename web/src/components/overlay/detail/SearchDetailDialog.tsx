@@ -1868,7 +1868,38 @@ export function VideoTab({ search }: VideoTabProps) {
     return `start/${startTime}/end/${endTime}`;
   }, [search]);
 
-  const source = `${baseUrl}vod/${search.camera}/${clipTimeRange}/index.m3u8`;
+  // Tracked items correspond to event-trigger windows; the dual-stream
+  // feature captures mainstream (HD) around these windows. Probe whether
+  // a main-quality VOD playlist is available for this range and prefer
+  // it; fall back to the default (sub) playlist if no main segments
+  // cover the event.
+  const [useMain, setUseMain] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setUseMain(null);
+    axios
+      .get(`${baseUrl}vod/${search.camera}/${clipTimeRange}/quality/main`)
+      .then(() => {
+        if (!cancelled) setUseMain(true);
+      })
+      .catch(() => {
+        if (!cancelled) setUseMain(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [search.camera, clipTimeRange]);
+
+  if (useMain === null) {
+    return (
+      <div className="flex size-full items-center justify-center">
+        <ActivityIndicator />
+      </div>
+    );
+  }
+
+  const qualitySegment = useMain ? "/quality/main" : "";
+  const source = `${baseUrl}vod/${search.camera}/${clipTimeRange}${qualitySegment}/index.m3u8`;
 
   return (
     <>
