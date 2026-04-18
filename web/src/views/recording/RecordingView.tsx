@@ -639,36 +639,68 @@ export function RecordingView({
                 </div>
               )}
             </Button>
+            {isMobile && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
+                    aria-label="Toggle stream quality"
+                    size="sm"
+                    variant={streamQuality === "main" ? "select" : "default"}
+                    onClick={() =>
+                      setStreamQuality((prev) =>
+                        prev === "sub" ? "main" : "sub",
+                      )
+                    }
+                  >
+                    <span>{streamQuality === "main" ? "HD" : "SD"}</span>
+                    {streamQuality === "main" &&
+                      !mainStreamAvailableForCurrentTime && (
+                        <span className="text-xs text-warning">!</span>
+                      )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {streamQuality === "main"
+                    ? mainStreamAvailableForCurrentTime
+                      ? "Playing main stream (HD)"
+                      : "Main stream selected but unavailable for current time - falling back to substream"
+                    : "Playing substream (SD) - click to switch to main stream where available"}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
           <div className="flex items-center justify-end gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
-                  aria-label="Toggle stream quality"
-                  size="sm"
-                  variant={streamQuality === "main" ? "select" : "default"}
-                  onClick={() =>
-                    setStreamQuality((prev) =>
-                      prev === "sub" ? "main" : "sub",
-                    )
-                  }
-                >
-                  <span>{streamQuality === "main" ? "HD" : "SD"}</span>
-                  {streamQuality === "main" &&
-                    !mainStreamAvailableForCurrentTime && (
-                      <span className="text-xs text-warning">!</span>
-                    )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {streamQuality === "main"
-                  ? mainStreamAvailableForCurrentTime
-                    ? "Playing main stream (HD)"
-                    : "Main stream selected but unavailable for current time - falling back to substream"
-                  : "Playing substream (SD) - click to switch to main stream where available"}
-              </TooltipContent>
-            </Tooltip>
+            {!isMobile && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
+                    aria-label="Toggle stream quality"
+                    size="sm"
+                    variant={streamQuality === "main" ? "select" : "default"}
+                    onClick={() =>
+                      setStreamQuality((prev) =>
+                        prev === "sub" ? "main" : "sub",
+                      )
+                    }
+                  >
+                    <span>{streamQuality === "main" ? "HD" : "SD"}</span>
+                    {streamQuality === "main" &&
+                      !mainStreamAvailableForCurrentTime && (
+                        <span className="text-xs text-warning">!</span>
+                      )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {streamQuality === "main"
+                    ? mainStreamAvailableForCurrentTime
+                      ? "Playing main stream (HD)"
+                      : "Main stream selected but unavailable for current time - falling back to substream"
+                    : "Playing substream (SD) - click to switch to main stream where available"}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <MobileCameraDrawer
               allCameras={effectiveCameras}
               selected={mainCamera}
