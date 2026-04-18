@@ -115,17 +115,36 @@ class RecordingMaintainer(threading.Thread):
         for cache in cache_files:
             cache_path = os.path.join(CACHE_DIR, cache)
             basename = os.path.splitext(cache)[0]
+
+            # Parse segment name: camera@timestamp or camera@main@timestamp.
+            # REGEX_CAMERA_NAME (^[a-zA-Z0-9_-]+$) forbids '@' in camera
+            # names, so rsplit("@", 1) is unambiguous: the last '@' always
+            # separates the timestamp (or the @main marker) from the camera.
             try:
-                camera, date = basename.rsplit("@", maxsplit=1)
-            except ValueError:
+                if "@" not in basename:
+                    raise ValueError("Unexpected segment name format")
+                prefix, date = basename.rsplit("@", 1)
+                if prefix.endswith("@main"):
+                    camera = prefix[: -len("@main")]
+                else:
+                    camera = prefix
+                if not camera:
+                    raise ValueError("Unexpected segment name format")
+            except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
                     self.unexpected_cache_files_logged = True
                 continue
 
-            start_time = datetime.datetime.strptime(
-                date, CACHE_SEGMENT_FORMAT
-            ).astimezone(datetime.timezone.utc)
+            try:
+                start_time = datetime.datetime.strptime(
+                    date, CACHE_SEGMENT_FORMAT
+                ).astimezone(datetime.timezone.utc)
+            except ValueError:
+                if not self.unexpected_cache_files_logged:
+                    logger.warning("Skipping unexpected files in cache")
+                    self.unexpected_cache_files_logged = True
+                continue
             if (
                 camera not in newest_cache_segments
                 or start_time > newest_cache_segments[camera]["start_time"]
@@ -174,23 +193,42 @@ class RecordingMaintainer(threading.Thread):
 
             cache_path = os.path.join(CACHE_DIR, cache)
             basename = os.path.splitext(cache)[0]
+
+            # Parse segment name: camera@timestamp or camera@main@timestamp.
+            stream_quality = "sub"
             try:
-                camera, date = basename.rsplit("@", maxsplit=1)
-            except ValueError:
+                if "@" not in basename:
+                    raise ValueError("Unexpected segment name format")
+                prefix, date = basename.rsplit("@", 1)
+                if prefix.endswith("@main"):
+                    camera = prefix[: -len("@main")]
+                    stream_quality = "main"
+                else:
+                    camera = prefix
+                if not camera:
+                    raise ValueError("Unexpected segment name format")
+            except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
                     self.unexpected_cache_files_logged = True
                 continue
 
             # important that start_time is utc because recordings are stored and compared in utc
-            start_time = datetime.datetime.strptime(
-                date, CACHE_SEGMENT_FORMAT
-            ).astimezone(datetime.timezone.utc)
+            try:
+                start_time = datetime.datetime.strptime(
+                    date, CACHE_SEGMENT_FORMAT
+                ).astimezone(datetime.timezone.utc)
+            except ValueError:
+                if not self.unexpected_cache_files_logged:
+                    logger.warning("Skipping unexpected files in cache")
+                    self.unexpected_cache_files_logged = True
+                continue
 
             grouped_recordings[camera].append(
                 {
                     "cache_path": cache_path,
                     "start_time": start_time,
+                    "stream_quality": stream_quality,
                 }
             )
 
@@ -320,6 +358,7 @@ class RecordingMaintainer(threading.Thread):
     ) -> Optional[dict[str, Any]]:
         cache_path: str = recording["cache_path"]
         start_time: datetime.datetime = recording["start_time"]
+        stream_quality: str = recording.get("stream_quality", "sub")
 
         # Just delete files if camera removed or recordings are turned off
         if (
@@ -372,6 +411,32 @@ class RecordingMaintainer(threading.Thread):
             )
 
         record_config = self.config.cameras[camera].record
+
+        # Main stream event segments honor the configured event_recording
+        # retain mode (defaulting to "all" if unset). They bypass the
+        # continuous/motion/review gating because they are only produced
+        # while an event is active and should be kept wholesale.
+        if stream_quality == "main":
+            event_retain = record_config.event_recording.retain
+            main_retain_mode = (
+                event_retain.mode
+                if event_retain and event_retain.mode is not None
+                else RetainModeEnum.all
+            )
+            segment_stats = self.segment_stats(camera, start_time, end_time)
+            if segment_stats.should_discard_segment(main_retain_mode):
+                self.drop_segment(cache_path)
+                return None
+            return await self.move_segment(
+                camera,
+                start_time,
+                end_time,
+                duration,
+                cache_path,
+                segment_stats,
+                stream_quality,
+            )
+
         segment_stats: SegmentInfo | None = None
         highest = None
 
@@ -414,6 +479,7 @@ class RecordingMaintainer(threading.Thread):
                         duration,
                         cache_path,
                         segment_stats,
+                        stream_quality,
                     )
 
         # we fell through the continuous / motion check, so we need to check the review items
@@ -459,6 +525,7 @@ class RecordingMaintainer(threading.Thread):
                     duration,
                     cache_path,
                     segment_stats,
+                    stream_quality,
                 )
             else:
                 self.drop_segment(cache_path)
@@ -600,6 +667,7 @@ class RecordingMaintainer(threading.Thread):
         duration: float,
         cache_path: str,
         segment_info: SegmentInfo,
+        stream_quality: str = "sub",
     ) -> Optional[dict[str, Any]]:
         # directory will be in utc due to start_time being in utc
         directory = os.path.join(
@@ -612,7 +680,8 @@ class RecordingMaintainer(threading.Thread):
             os.makedirs(directory)
 
         # file will be in utc due to start_time being in utc
-        file_name = f"{start_time.strftime('%M.%S.mp4')}"
+        quality_suffix = f"_{stream_quality}" if stream_quality != "sub" else ""
+        file_name = f"{start_time.strftime('%M.%S')}{quality_suffix}.mp4"
         file_path = os.path.join(directory, file_name)
 
         try:
@@ -675,6 +744,7 @@ class RecordingMaintainer(threading.Thread):
                     Recordings.dBFS.name: segment_info.average_dBFS,
                     Recordings.segment_size.name: segment_size,
                     Recordings.motion_heatmap.name: segment_info.motion_heatmap,
+                    Recordings.stream_quality.name: stream_quality,
                 }
         except Exception as e:
             logger.error(f"Unable to store recording segment {cache_path}")
