@@ -1,6 +1,14 @@
 {
   "alerts": "Alerts",
   "detections": "Detections",
+  "streamQuality": {
+    "hd": "HD",
+    "sd": "SD",
+    "toggleLabel": "Toggle stream quality",
+    "playingMain": "Playing main stream (HD)",
+    "playingMainUnavailable": "Main stream selected but unavailable for current time — falling back to substream",
+    "playingSub": "Playing substream (SD) — click to switch to main stream where available"
+  },
   "motion": {
     "label": "Motion",
     "only": "Motion only"

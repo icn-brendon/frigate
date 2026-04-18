@@ -25,6 +25,7 @@ type VirtualizedMotionSegmentsProps = {
   motionOnly: boolean;
   getMotionSegmentValue: (timestamp: number) => number;
   getRecordingAvailability: (timestamp: number) => boolean | undefined;
+  getMainStreamAvailability?: (timestamp: number) => boolean;
   alwaysShowMotionLine: boolean;
 };
 
@@ -58,6 +59,7 @@ export const VirtualizedMotionSegments = forwardRef<
       motionOnly,
       getMotionSegmentValue,
       getRecordingAvailability,
+      getMainStreamAvailability,
       alwaysShowMotionLine,
     },
     ref,
@@ -195,6 +197,7 @@ export const VirtualizedMotionSegments = forwardRef<
               hasRecording={hasRecording}
               prevIsNoRecording={prevIsNoRecording}
               nextIsNoRecording={nextIsNoRecording}
+              hasMainStream={getMainStreamAvailability?.(segmentTime) ?? false}
               segmentDuration={segmentDuration}
               segmentTime={segmentTime}
               timestampSpread={timestampSpread}
@@ -214,6 +217,7 @@ export const VirtualizedMotionSegments = forwardRef<
         events,
         getMotionSegmentValue,
         getRecordingAvailability,
+        getMainStreamAvailability,
         motionOnly,
         segmentDuration,
         showMinimap,

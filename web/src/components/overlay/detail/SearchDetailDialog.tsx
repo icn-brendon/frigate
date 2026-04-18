@@ -95,7 +95,7 @@ import { PiSlidersHorizontalBold } from "react-icons/pi";
 import { HiSparkles } from "react-icons/hi";
 import { useAudioTranscriptionProcessState } from "@/api/ws";
 
-const SEARCH_TABS = ["snapshot", "tracking_details"] as const;
+const SEARCH_TABS = ["snapshot", "video", "tracking_details"] as const;
 export type SearchTab = (typeof SEARCH_TABS)[number];
 
 type TabsWithActionsProps = {
@@ -161,7 +161,9 @@ function TabsWithActions({
                     ? search?.has_snapshot
                       ? t("type.snapshot")
                       : t("type.thumbnail")
-                    : t(`type.${item}`)}
+                    : item === "video"
+                      ? t("type.video")
+                      : t(`type.${item}`)}
                 </div>
               </ToggleGroupItem>
             ))}
@@ -344,6 +346,56 @@ function DialogContentComponent({
     );
   }
 
+  if (page === "video") {
+    if (isDesktop) {
+      return (
+        <div className="grid h-full w-full grid-cols-[60%_40%] gap-4">
+          <div className="scrollbar-container min-w-0 overflow-y-auto overflow-x-hidden">
+            <VideoTab search={search} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-4 pr-2">
+            <TabsWithActions
+              search={search}
+              searchTabs={searchTabs}
+              pageToggle={pageToggle}
+              setPageToggle={setPageToggle}
+              config={config}
+              setSearch={setSearch}
+              setSimilarity={setSimilarity}
+              isPopoverOpen={isPopoverOpen}
+              setIsPopoverOpen={setIsPopoverOpen}
+              dialogContainer={dialogContainer}
+            />
+            <div className="scrollbar-container min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4">
+              <ObjectDetailsTab
+                search={search}
+                config={config}
+                setSearch={setSearch}
+                setInputFocused={setInputFocused}
+                setShowNavigationButtons={setShowNavigationButtons}
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <div className="mb-4 w-full">
+          <VideoTab search={search} />
+        </div>
+        <ObjectDetailsTab
+          search={search}
+          config={config}
+          setSearch={setSearch}
+          setInputFocused={setInputFocused}
+          setShowNavigationButtons={setShowNavigationButtons}
+        />
+      </>
+    );
+  }
+
   // Snapshot page content
   const snapshotElement = search.has_snapshot ? (
     <ObjectSnapshotTab
@@ -515,8 +567,14 @@ export default function SearchDetailDialog({
     const views = [...SEARCH_TABS];
 
     if (!search.has_clip) {
-      const index = views.indexOf("tracking_details");
-      views.splice(index, 1);
+      const trackingIndex = views.indexOf("tracking_details");
+      if (trackingIndex !== -1) {
+        views.splice(trackingIndex, 1);
+      }
+      const videoIndex = views.indexOf("video");
+      if (videoIndex !== -1) {
+        views.splice(videoIndex, 1);
+      }
     }
 
     return views;
@@ -1868,7 +1926,55 @@ export function VideoTab({ search }: VideoTabProps) {
     return `start/${startTime}/end/${endTime}`;
   }, [search]);
 
-  const source = `${baseUrl}vod/${search.camera}/${clipTimeRange}/index.m3u8`;
+  // Tracked items correspond to event-trigger windows; the dual-stream
+  // feature captures mainstream (HD) around these windows. Probe whether
+  // a main-quality recording covers this range and prefer it; fall back
+  // to the default (sub) playlist otherwise.
+  //
+  // Probe via the /recordings/main_availability API (served under
+  // /api/...) rather than hitting /vod/... directly: the nginx `/vod/`
+  // location is handled by nginx-vod-module and only answers valid HLS
+  // requests (master.m3u8/index.m3u8/.ts/.m4s), so a bare quality-path
+  // probe never reaches the Python backend and would always report
+  // unavailable.
+  const [useMain, setUseMain] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setUseMain(null);
+    const after = search.start_time - REVIEW_PADDING;
+    const before = (search.end_time ?? Date.now() / 1000) + REVIEW_PADDING;
+    axios
+      .get(`${search.camera}/recordings/main_availability`, {
+        params: { after, before },
+      })
+      .then((resp) => {
+        if (cancelled) return;
+        const ranges: { start_time: number; end_time: number }[] =
+          resp.data?.ranges ?? [];
+        // Any overlap with the event window means HD is available.
+        const hasOverlap = ranges.some(
+          (r) => r.end_time >= after && r.start_time <= before,
+        );
+        setUseMain(hasOverlap);
+      })
+      .catch(() => {
+        if (!cancelled) setUseMain(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [search.camera, search.start_time, search.end_time]);
+
+  if (useMain === null) {
+    return (
+      <div className="flex size-full items-center justify-center">
+        <ActivityIndicator />
+      </div>
+    );
+  }
+
+  const qualitySegment = useMain ? "/quality/main" : "";
+  const source = `${baseUrl}vod/${search.camera}/${clipTimeRange}${qualitySegment}/index.m3u8`;
 
   return (
     <>

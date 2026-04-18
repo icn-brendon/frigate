@@ -49,6 +49,14 @@ import { TimeRange, TimelineType } from "@/types/timeline";
 import MobileCameraDrawer from "@/components/overlay/MobileCameraDrawer";
 import MobileTimelineDrawer from "@/components/overlay/MobileTimelineDrawer";
 import MobileReviewSettingsDrawer from "@/components/overlay/MobileReviewSettingsDrawer";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { FiMoreVertical } from "react-icons/fi";
 import Logo from "@/components/Logo";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FaVideo } from "react-icons/fa";
@@ -58,6 +66,7 @@ import {
   ASPECT_WIDE_LAYOUT,
   RecordingSegment,
   RecordingStartingPoint,
+  StreamQuality,
 } from "@/types/record";
 import { cn } from "@/lib/utils";
 import { useFullscreen } from "@/hooks/use-fullscreen";
@@ -145,6 +154,40 @@ export function RecordingView({
   const mainCameraReviewItems = useMemo(
     () => reviewItems?.filter((cam) => cam.camera == mainCamera) ?? [],
     [reviewItems, mainCamera],
+  );
+
+  // stream quality
+
+  const [streamQuality, setStreamQuality] = useState<StreamQuality>("sub");
+
+  // Main stream availability is driven by the backend record of which time
+  // ranges have a main-stream segment on disk (populated by the event
+  // recorder), not by review items. The endpoint returns a list of
+  // {start_time, end_time} ranges within [after, before].
+  // Server response is {ranges: [...], truncated: bool}. The endpoint
+  // rejects windows wider than 7 days with HTTP 400; the per-day timeline
+  // span is always well under that cap.
+  const { data: mainAvailabilityResponse } = useSWR<{
+    ranges: { start_time: number; end_time: number }[];
+    truncated: boolean;
+  }>([
+    `${mainCamera}/recordings/main_availability`,
+    {
+      after: timeRange.after,
+      before: timeRange.before,
+    },
+  ]);
+
+  const getMainStreamAvailability = useCallback(
+    (timestamp: number): boolean => {
+      const ranges = mainAvailabilityResponse?.ranges;
+      if (!ranges || ranges.length === 0) return false;
+
+      return ranges.some(
+        (r) => timestamp >= r.start_time && timestamp <= r.end_time,
+      );
+    },
+    [mainAvailabilityResponse],
   );
 
   // timeline
@@ -257,6 +300,11 @@ export function RecordingView({
   const [scrubbing, setScrubbing] = useState(false);
   const [currentTime, setCurrentTime] = useState<number>(startTime);
   const [playerTime, setPlayerTime] = useState(startTime);
+
+  const mainStreamAvailableForCurrentTime = useMemo(
+    () => getMainStreamAvailability(currentTime),
+    [getMainStreamAvailability, currentTime],
+  );
 
   const updateSelectedSegment = useCallback(
     (currentTime: number, updateStartTime: boolean) => {
@@ -591,99 +639,212 @@ export function RecordingView({
                 </div>
               )}
             </Button>
+            {isMobile && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
+                    aria-label={t("streamQuality.toggleLabel")}
+                    size="sm"
+                    variant={streamQuality === "main" ? "select" : "default"}
+                    onClick={() =>
+                      setStreamQuality((prev) =>
+                        prev === "sub" ? "main" : "sub",
+                      )
+                    }
+                  >
+                    <span>
+                      {streamQuality === "main"
+                        ? t("streamQuality.hd")
+                        : t("streamQuality.sd")}
+                    </span>
+                    {streamQuality === "main" &&
+                      !mainStreamAvailableForCurrentTime && (
+                        <span className="text-xs text-warning">!</span>
+                      )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {streamQuality === "main"
+                    ? mainStreamAvailableForCurrentTime
+                      ? t("streamQuality.playingMain")
+                      : t("streamQuality.playingMainUnavailable")
+                    : t("streamQuality.playingSub")}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
           <div className="flex items-center justify-end gap-2">
+            {!isMobile && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
+                    aria-label={t("streamQuality.toggleLabel")}
+                    size="sm"
+                    variant={streamQuality === "main" ? "select" : "default"}
+                    onClick={() =>
+                      setStreamQuality((prev) =>
+                        prev === "sub" ? "main" : "sub",
+                      )
+                    }
+                  >
+                    <span>
+                      {streamQuality === "main"
+                        ? t("streamQuality.hd")
+                        : t("streamQuality.sd")}
+                    </span>
+                    {streamQuality === "main" &&
+                      !mainStreamAvailableForCurrentTime && (
+                        <span className="text-xs text-warning">!</span>
+                      )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {streamQuality === "main"
+                    ? mainStreamAvailableForCurrentTime
+                      ? t("streamQuality.playingMain")
+                      : t("streamQuality.playingMainUnavailable")
+                    : t("streamQuality.playingSub")}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <MobileCameraDrawer
               allCameras={effectiveCameras}
               selected={mainCamera}
               onSelectCamera={onSelectCamera}
             />
             {isDesktop && (
-              <DebugReplayDialog
-                camera={mainCamera}
-                currentTime={currentTime}
-                latestTime={timeRange.before}
-                mode={debugReplayMode}
-                range={debugReplayRange}
-                setRange={(range: TimeRange | undefined) => {
-                  setDebugReplayRange(range);
+              <div className="hidden items-center gap-2 lg:flex">
+                <DebugReplayDialog
+                  camera={mainCamera}
+                  currentTime={currentTime}
+                  latestTime={timeRange.before}
+                  mode={debugReplayMode}
+                  range={debugReplayRange}
+                  setRange={(range: TimeRange | undefined) => {
+                    setDebugReplayRange(range);
 
-                  if (range != undefined) {
-                    mainControllerRef.current?.pause();
-                  }
-                }}
-                setMode={setDebugReplayMode}
-              />
-            )}
-            {isDesktop && (
-              <ExportDialog
-                camera={mainCamera}
-                currentTime={currentTime}
-                latestTime={timeRange.before}
-                mode={exportMode}
-                range={exportRange}
-                showPreview={showExportPreview}
-                setRange={(range) => {
-                  setExportRange(range);
+                    if (range != undefined) {
+                      mainControllerRef.current?.pause();
+                    }
+                  }}
+                  setMode={setDebugReplayMode}
+                />
+                <ExportDialog
+                  camera={mainCamera}
+                  currentTime={currentTime}
+                  latestTime={timeRange.before}
+                  mode={exportMode}
+                  range={exportRange}
+                  showPreview={showExportPreview}
+                  setRange={(range) => {
+                    setExportRange(range);
 
-                  if (range != undefined) {
-                    mainControllerRef.current?.pause();
-                  }
-                }}
-                setMode={setExportMode}
-                setShowPreview={setShowExportPreview}
-              />
+                    if (range != undefined) {
+                      mainControllerRef.current?.pause();
+                    }
+                  }}
+                  setMode={setExportMode}
+                  setShowPreview={setShowExportPreview}
+                />
+                <ReviewFilterGroup
+                  filters={["cameras", "date", "general"]}
+                  reviewSummary={reviewSummary}
+                  recordingsSummary={recordingsSummary}
+                  filter={filter}
+                  motionOnly={false}
+                  filterList={reviewFilterList}
+                  showReviewed
+                  setShowReviewed={() => {}}
+                  mainCamera={mainCamera}
+                  onUpdateFilter={(newFilter: ReviewFilter) => {
+                    const updatedCameras =
+                      newFilter.cameras === undefined
+                        ? undefined // Respect undefined as "all cameras"
+                        : newFilter.cameras
+                          ? Array.from(
+                              new Set([
+                                mainCamera,
+                                ...(newFilter.cameras || []),
+                              ]),
+                            ) // Include mainCamera if specific cameras are selected
+                          : [mainCamera];
+                    const adjustedFilter: ReviewFilter = {
+                      ...newFilter,
+                      cameras: updatedCameras,
+                    };
+                    updateFilter(adjustedFilter);
+                  }}
+                  setMotionOnly={() => {}}
+                />
+                <ActionsDropdown
+                  onDebugReplayClick={() => {
+                    const now = new Date(timeRange.before * 1000);
+                    now.setHours(now.getHours() - 1);
+                    setDebugReplayRange({
+                      after: now.getTime() / 1000,
+                      before: timeRange.before,
+                    });
+                    setDebugReplayMode("select");
+                  }}
+                  onExportClick={() => {
+                    const now = new Date(timeRange.before * 1000);
+                    now.setHours(now.getHours() - 1);
+                    setExportRange({
+                      before: timeRange.before,
+                      after: now.getTime() / 1000,
+                    });
+                    setExportMode("select");
+                  }}
+                />
+              </div>
             )}
             {isDesktop && (
-              <ReviewFilterGroup
-                filters={["cameras", "date", "general"]}
-                reviewSummary={reviewSummary}
-                recordingsSummary={recordingsSummary}
-                filter={filter}
-                motionOnly={false}
-                filterList={reviewFilterList}
-                showReviewed
-                setShowReviewed={() => {}}
-                mainCamera={mainCamera}
-                onUpdateFilter={(newFilter: ReviewFilter) => {
-                  const updatedCameras =
-                    newFilter.cameras === undefined
-                      ? undefined // Respect undefined as "all cameras"
-                      : newFilter.cameras
-                        ? Array.from(
-                            new Set([mainCamera, ...(newFilter.cameras || [])]),
-                          ) // Include mainCamera if specific cameras are selected
-                        : [mainCamera];
-                  const adjustedFilter: ReviewFilter = {
-                    ...newFilter,
-                    cameras: updatedCameras,
-                  };
-                  updateFilter(adjustedFilter);
-                }}
-                setMotionOnly={() => {}}
-              />
-            )}
-            {isDesktop && (
-              <ActionsDropdown
-                onDebugReplayClick={() => {
-                  const now = new Date(timeRange.before * 1000);
-                  now.setHours(now.getHours() - 1);
-                  setDebugReplayRange({
-                    after: now.getTime() / 1000,
-                    before: timeRange.before,
-                  });
-                  setDebugReplayMode("select");
-                }}
-                onExportClick={() => {
-                  const now = new Date(timeRange.before * 1000);
-                  now.setHours(now.getHours() - 1);
-                  setExportRange({
-                    before: timeRange.before,
-                    after: now.getTime() / 1000,
-                  });
-                  setExportMode("select");
-                }}
-              />
+              <div className="flex lg:hidden">
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className="flex items-center gap-1 rounded-lg"
+                      aria-label="More toolbar actions"
+                      size="sm"
+                    >
+                      <FiMoreVertical className="size-5 text-secondary-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>
+                      {t("menu.actions", { ns: "common" })}
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const now = new Date(timeRange.before * 1000);
+                        now.setHours(now.getHours() - 1);
+                        setExportRange({
+                          before: timeRange.before,
+                          after: now.getTime() / 1000,
+                        });
+                        setExportMode("select");
+                      }}
+                    >
+                      {t("menu.export", { ns: "common" })}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const now = new Date(timeRange.before * 1000);
+                        now.setHours(now.getHours() - 1);
+                        setDebugReplayRange({
+                          after: now.getTime() / 1000,
+                          before: timeRange.before,
+                        });
+                        setDebugReplayMode("select");
+                      }}
+                    >
+                      {t("title", { ns: "views/replay" })}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             )}
             {isDesktop ? (
               <ToggleGroup
@@ -818,6 +979,7 @@ export function RecordingView({
                     exportMode != "select" && debugReplayMode != "select"
                   }
                   fullscreen={fullscreen}
+                  streamQuality={streamQuality}
                   onTimestampUpdate={(timestamp) => {
                     setPlayerTime(timestamp);
                     setCurrentTime(timestamp);
@@ -902,6 +1064,7 @@ export function RecordingView({
           <Timeline
             contentRef={contentRef}
             mainCamera={mainCamera}
+            getMainStreamAvailability={getMainStreamAvailability}
             timelineType={
               (exportRange == undefined && debugReplayRange == undefined
                 ? timelineType
@@ -939,6 +1102,7 @@ type TimelineProps = {
   contentRef: MutableRefObject<HTMLDivElement | null>;
   timelineRef?: MutableRefObject<HTMLDivElement | null>;
   mainCamera: string;
+  getMainStreamAvailability?: (timestamp: number) => boolean;
   timelineType: TimelineType;
   timeRange: TimeRange;
   mainCameraReviewItems: ReviewSegment[];
@@ -956,6 +1120,7 @@ function Timeline({
   contentRef,
   timelineRef,
   mainCamera,
+  getMainStreamAvailability,
   timelineType,
   timeRange,
   mainCameraReviewItems,
@@ -1111,6 +1276,7 @@ function Timeline({
             events={mainCameraReviewItems}
             motion_events={motionData ?? []}
             noRecordingRanges={noRecordings ?? []}
+            getMainStreamAvailability={getMainStreamAvailability}
             contentRef={contentRef}
             onHandlebarDraggingChange={(scrubbing) => setScrubbing(scrubbing)}
             isZooming={isZooming}

@@ -330,6 +330,60 @@ To reduce output file size, add the FFmpeg parameter `-qp n` to `ffmpeg_output_a
 
 :::
 
+## Event Recording (main stream)
+
+When a camera has both a continuous substream (`record`) and a separate mainstream input with the `record_events` role, Frigate only persists mainstream segments while an alert or detection is active. The mainstream ffmpeg process runs continuously and writes short segments into a ring buffer on tmpfs. When activity starts, the last `pre_capture` seconds of buffered segments are promoted to the recordings volume alongside new segments for the duration of the event plus `post_capture` seconds.
+
+This lets you keep 24/7 SD (substream) for timeline context and HD (mainstream) only for the moments that matter, without doubling storage or running a 24/7 HD re-encoder.
+
+See [Dual-stream recording](dual_stream_recording.md) and the [`record_events` role](cameras.md#setting-up-camera-inputs).
+
+### Tmpfs sizing
+
+The ring buffer lives under `/tmp/event_cache` when that path is a mounted tmpfs, otherwise it falls back to `/tmp/cache/event_buffer`. Size the tmpfs so it can hold at least `pre_capture` seconds of mainstream video for every camera at once, with headroom:
+
+```
+bytes = mainstream_bitrate (MB/s) × pre_capture (s) × num_cameras × 1.5
+```
+
+A 4 Mbps (0.5 MB/s) mainstream with `pre_capture: 15` across 8 cameras needs roughly `0.5 × 15 × 8 × 1.5 ≈ 90 MB`. Running the ring buffer on a regular volume is supported but writes continuously and burns SSD write lifetime; a tmpfs mount is strongly recommended.
+
+### Configuration
+
+<ConfigTabs>
+<TabItem value="yaml">
+
+```yaml
+record:
+  enabled: True
+  event_recording:
+    enabled: True
+    pre_capture: 15 # seconds of buffered main-stream footage promoted on trigger
+    post_capture: 10 # seconds of main-stream kept after activity clears
+    retain:
+      days: 30
+      mode: motion
+```
+
+</TabItem>
+</ConfigTabs>
+
+| Field                          | Default  | Description                                                                              |
+| ------------------------------ | -------- | ---------------------------------------------------------------------------------------- |
+| `event_recording.enabled`      | `False`  | Enables main-stream event recording. Requires an input with the `record_events` role.    |
+| `event_recording.pre_capture`  | `15`     | Seconds of pre-trigger main-stream footage promoted from the ring buffer. Capped at 60.  |
+| `event_recording.post_capture` | `10`     | Seconds of main-stream kept after the review item ends.                                  |
+| `event_recording.retain.days`  | `10`     | Retention days for main-stream event recordings.                                         |
+| `event_recording.retain.mode`  | `motion` | Retention mode for main-stream event recordings. Same semantics as `alerts.retain.mode`. |
+
+`event_recording` is independent of `record.alerts` and `record.detections`: those still govern substream (continuous `record`) retention around review items. `event_recording.retain` only controls the mainstream clips produced by the ring buffer.
+
+:::note
+
+Stationary objects can keep a review item open indefinitely (e.g. a parked car). To prevent that from holding the main stream open forever, tune `stationary_trigger_recording` / `stationary_recording_threshold` on the relevant object filter. See [Stationary event recording](objects.md#stationary-event-recording).
+
+:::
+
 ## Apple Compatibility with H.265 Streams
 
 Apple devices running the Safari browser may fail to playback h.265 recordings. The [apple compatibility option](../configuration/camera_specific.md#h265-cameras-via-safari) should be used to ensure seamless playback on Apple devices.

@@ -4,6 +4,12 @@
     "withCamera": "{{camera}} - Live - Frigate"
   },
   "lowBandwidthMode": "Low-bandwidth Mode",
+  "streamQuality": {
+    "hd": "HD",
+    "sd": "SD",
+    "playingMainTooltip": "Playing mainstream (HD) — click for substream",
+    "playingSubTooltip": "Playing substream (SD) — click for mainstream"
+  },
   "twoWayTalk": {
     "enable": "Enable Two Way Talk",
     "disable": "Disable Two Way Talk"

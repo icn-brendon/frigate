@@ -15,11 +15,31 @@ A camera is enabled by default but can be disabled by using `enabled: False`. Ca
 
 Each role can only be assigned to one input per camera. The options for roles are as follows:
 
-| Role     | Description                                                                         |
-| -------- | ----------------------------------------------------------------------------------- |
-| `detect` | Main feed for object detection. [docs](object_detectors.md)                         |
-| `record` | Saves segments of the video feed based on configuration settings. [docs](record.md) |
-| `audio`  | Feed for audio based detection. [docs](audio_detectors.md)                          |
+| Role            | Description                                                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `detect`        | Main feed for object detection. [docs](object_detectors.md)                                                                |
+| `record`        | Saves segments of the video feed based on configuration settings. [docs](record.md)                                        |
+| `record_events` | Main-stream feed recorded only during alerts/detections, alongside a continuous `record` substream. [docs](record.md#event-recording-main-stream) |
+| `audio`         | Feed for audio based detection. [docs](audio_detectors.md)                                                                 |
+
+The `record` and `record_events` roles may not be assigned to the same input. The typical dual-stream layout puts the substream on `[detect, record]` and the mainstream on `[record_events]`:
+
+```yaml
+cameras:
+  driveway:
+    enabled: True
+    ffmpeg:
+      inputs:
+        - path: rtsp://viewer:{FRIGATE_RTSP_PASSWORD}@10.0.10.10:554/cam/realmonitor?channel=1&subtype=1 # main
+          roles:
+            - record_events
+        - path: rtsp://viewer:{FRIGATE_RTSP_PASSWORD}@10.0.10.10:554/cam/realmonitor?channel=1&subtype=2 # sub
+          roles:
+            - detect
+            - record
+```
+
+See [Dual-stream recording](dual_stream_recording.md) for the concept and [record config](record.md#event-recording-main-stream) for the matching `record.event_recording` block.
 
 <ConfigTabs>
 <TabItem value="ui">

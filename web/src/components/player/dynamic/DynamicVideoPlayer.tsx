@@ -9,7 +9,7 @@ import {
 import { useApiHost } from "@/api";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
-import { Recording } from "@/types/record";
+import { Recording, StreamQuality } from "@/types/record";
 import { Preview } from "@/types/preview";
 import PreviewPlayer, { PreviewController } from "../PreviewPlayer";
 import { DynamicVideoController } from "./DynamicVideoController";
@@ -40,6 +40,7 @@ type DynamicVideoPlayerProps = {
   hotKeys: boolean;
   supportsFullscreen: boolean;
   fullscreen: boolean;
+  streamQuality?: StreamQuality;
   onControllerReady: (controller: DynamicVideoController) => void;
   onTimestampUpdate?: (timestamp: number) => void;
   onClipEnded?: () => void;
@@ -59,6 +60,7 @@ export default function DynamicVideoPlayer({
   hotKeys,
   supportsFullscreen,
   fullscreen,
+  streamQuality = "sub",
   onControllerReady,
   onTimestampUpdate,
   onClipEnded,
@@ -187,8 +189,9 @@ export default function DynamicVideoPlayer({
     () => ({
       before: timeRange.before,
       after: timeRange.after,
+      quality: streamQuality,
     }),
-    [timeRange],
+    [timeRange, streamQuality],
   );
   const { data: recordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
@@ -219,13 +222,14 @@ export default function DynamicVideoPlayer({
       );
     }
 
+    const qualitySegment = streamQuality === "main" ? "/quality/main" : "";
     setSource({
-      playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}/master.m3u8`,
+      playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}${qualitySegment}/master.m3u8`,
       startPosition,
     });
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordings]);
+  }, [recordings, streamQuality]);
 
   useEffect(() => {
     if (!controller || !recordings?.length) {
