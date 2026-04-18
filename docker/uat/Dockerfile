@@ -57,5 +57,10 @@ COPY --from=nginx-build /usr/local/nginx/sbin/nginx /usr/local/nginx/sbin/nginx
 COPY frigate/ /opt/frigate/frigate/
 COPY migrations/ /opt/frigate/migrations/
 
+# Overwrite go2rtc config generator with our fork's version.
+# Required for auto-injecting `<camera>_main` streams when a camera has a
+# `record_events` ffmpeg input, which the HD/SD live toggle relies on.
+COPY docker/main/rootfs/usr/local/go2rtc/create_config.py /usr/local/go2rtc/create_config.py
+
 # Overwrite web frontend with our fork's built assets
 COPY --from=web-build /work/dist/ /opt/frigate/web/
