@@ -913,6 +913,49 @@ class FrigateConfig(FrigateBaseModel):
             if not camera_config.live.streams:
                 camera_config.live.streams = {name: name}
 
+            # Auto-register a `<camera>_main` live stream and matching go2rtc
+            # entry when the camera has an input with `record_events` role.
+            # This lets the UI offer an HD/SD toggle that switches between the
+            # default (substream) and mainstream go2rtc streams.
+            record_events_input = None
+            for cam_input in camera_config.ffmpeg.inputs:
+                input_roles = {
+                    role.value if hasattr(role, "value") else role
+                    for role in cam_input.roles
+                }
+                if "record_events" in input_roles:
+                    record_events_input = cam_input
+                    break
+
+            if record_events_input is not None:
+                main_stream_name = f"{name}_main"
+
+                # expose the main stream in the live streams mapping so the UI
+                # can render the HD toggle
+                if main_stream_name not in camera_config.live.streams.values():
+                    camera_config.live.streams["HD"] = main_stream_name
+
+                # ensure the go2rtc streams dict contains this stream so
+                # verify_valid_live_stream_names passes and `isRestreamed`
+                # evaluates true for the HD option in the UI
+                existing_streams = (
+                    self.go2rtc.model_dump().get("streams", {}) or {}
+                )
+                if main_stream_name not in existing_streams:
+                    existing_streams[main_stream_name] = (
+                        record_events_input.path
+                    )
+                    # RestreamConfig has extra="allow"; store via model_extra
+                    # which Pydantic exposes for extra=allow models.
+                    extras = self.go2rtc.__pydantic_extra__
+                    if extras is None:
+                        extras = {}
+                    extras["streams"] = existing_streams
+                    # re-assign in case the attribute was None previously
+                    object.__setattr__(
+                        self.go2rtc, "__pydantic_extra__", extras
+                    )
+
             # generate the ffmpeg commands
             camera_config.create_ffmpeg_cmds()
             self.cameras[name] = camera_config

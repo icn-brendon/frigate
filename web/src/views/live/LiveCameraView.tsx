@@ -13,6 +13,11 @@ import CameraFeatureToggle from "@/components/dynamic/CameraFeatureToggle";
 import FilterSwitch from "@/components/filter/FilterSwitch";
 import LivePlayer from "@/components/player/LivePlayer";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
 import {
   DropdownMenu,
@@ -158,11 +163,47 @@ export default function LiveCameraView({
       Object.values(camera.live.streams)[0],
     );
 
+  // HD/SD toggle state — defaults to SD (substream). Session-local per camera.
+  // When the camera has an input with the `record_events` role the backend
+  // auto-exposes a `<camera>_main` go2rtc stream; the toggle flips between
+  // the user-selected (sub) stream and that mainstream.
+  const hasMainStream = useMemo(() => {
+    const inputs = camera.ffmpeg?.inputs ?? [];
+    return inputs.some((input) =>
+      (input.roles ?? []).includes("record_events"),
+    );
+  }, [camera.ffmpeg?.inputs]);
+
+  const mainStreamName = `${camera.name}_main`;
+
+  const [liveQuality, setLiveQuality] = useSessionPersistence<"sub" | "main">(
+    `${camera.name}-live-quality`,
+    "sub",
+  );
+
+  // coerce invalid persisted values back to "sub"
+  useEffect(() => {
+    if (liveQuality !== "sub" && liveQuality !== "main") {
+      setLiveQuality("sub");
+    }
+  }, [liveQuality, setLiveQuality]);
+
+  // effective stream name handed to the player: main when toggled and
+  // available, otherwise the user-selected substream.
+  const effectiveStreamName = useMemo(() => {
+    if (liveQuality === "main" && hasMainStream) {
+      return mainStreamName;
+    }
+    return streamName ?? "";
+  }, [liveQuality, hasMainStream, mainStreamName, streamName]);
+
   const isRestreamed = useMemo(
     () =>
       config &&
-      Object.keys(config.go2rtc.streams || {}).includes(streamName ?? ""),
-    [config, streamName],
+      Object.keys(config.go2rtc.streams || {}).includes(
+        effectiveStreamName ?? "",
+      ),
+    [config, effectiveStreamName],
   );
 
   // validate stored stream name and reset if now invalid
@@ -179,7 +220,7 @@ export default function LiveCameraView({
   }, [streamNameLoaded, camera.live.streams, streamName, setStreamName]);
 
   const { data: cameraMetadata } = useSWR<LiveStreamMetadata>(
-    isRestreamed ? `go2rtc/streams/${streamName}` : null,
+    isRestreamed ? `go2rtc/streams/${effectiveStreamName}` : null,
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
@@ -666,6 +707,29 @@ export default function LiveCameraView({
                 disabled={!cameraEnabled || debug}
               />
             )}
+            {hasMainStream && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
+                    aria-label="Toggle live stream quality"
+                    size="sm"
+                    variant={liveQuality === "main" ? "select" : "default"}
+                    onClick={() =>
+                      setLiveQuality(liveQuality === "main" ? "sub" : "main")
+                    }
+                    disabled={!cameraEnabled || debug}
+                  >
+                    <span>{liveQuality === "main" ? "HD" : "SD"}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {liveQuality === "main"
+                    ? "Playing mainstream (HD) — click for substream"
+                    : "Playing substream (SD) — click for mainstream"}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <FrigateCameraFeatures
               camera={camera}
               recordingEnabled={camera.record.enabled_in_config}
@@ -675,7 +739,7 @@ export default function LiveCameraView({
                 camera.audio_transcription.enabled_in_config
               }
               fullscreen={fullscreen}
-              streamName={streamName ?? ""}
+              streamName={effectiveStreamName}
               setStreamName={setStreamName}
               preferredLiveMode={preferredLiveMode}
               playInBackground={playInBackground ?? false}
@@ -752,7 +816,7 @@ export default function LiveCameraView({
                   </div>
                 )}
                 <LivePlayer
-                  key={camera.name}
+                  key={`${camera.name}-${liveQuality}`}
                   className={`${fullscreen ? "*:rounded-none" : ""}`}
                   windowVisible
                   showStillWithoutActivity={false}
@@ -765,7 +829,7 @@ export default function LiveCameraView({
                   iOSCompatFullScreen={isIOS}
                   preferredLiveMode={preferredLiveMode}
                   useWebGL={true}
-                  streamName={streamName ?? ""}
+                  streamName={effectiveStreamName}
                   pip={pip}
                   containerRef={containerRef}
                   setFullResolution={setFullResolution}

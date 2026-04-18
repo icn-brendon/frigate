@@ -181,6 +181,50 @@ for name in list(go2rtc_config.get("streams", {})):
             )
             del go2rtc_config["streams"][name]
 
+# Auto-add a `<camera>_main` go2rtc stream for any camera that has an input
+# with the `record_events` role, so the UI can offer an HD/SD live view toggle.
+# Only added when the user has not already configured a stream with that name.
+cameras_config: dict[str, Any] = config.get("cameras") or {}
+for camera_name, camera_cfg in cameras_config.items():
+    if not isinstance(camera_cfg, dict):
+        continue
+
+    ffmpeg_cfg = camera_cfg.get("ffmpeg") or {}
+    inputs = ffmpeg_cfg.get("inputs") or []
+
+    record_events_input = None
+    for cam_input in inputs:
+        if not isinstance(cam_input, dict):
+            continue
+        roles = cam_input.get("roles") or []
+        if "record_events" in roles:
+            record_events_input = cam_input
+            break
+
+    if record_events_input is None:
+        continue
+
+    input_path = record_events_input.get("path")
+    if not input_path:
+        continue
+
+    main_stream_name = f"{camera_name}_main"
+
+    if go2rtc_config.get("streams") is None:
+        go2rtc_config["streams"] = {}
+
+    if main_stream_name in go2rtc_config["streams"]:
+        # user-configured or already added, leave alone
+        continue
+
+    try:
+        formatted_path = substitute_frigate_vars(input_path)
+    except KeyError:
+        # if substitution fails, fall back to raw path
+        formatted_path = input_path
+
+    go2rtc_config["streams"][main_stream_name] = formatted_path
+
 # add birdseye restream stream if enabled
 if config.get("birdseye", {}).get("restream", False):
     birdseye: dict[str, Any] = config.get("birdseye")
