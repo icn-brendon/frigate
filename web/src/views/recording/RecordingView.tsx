@@ -636,7 +636,7 @@ export function RecordingView({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="flex items-center gap-1.5 rounded-lg"
+                  className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
                   aria-label="Toggle stream quality"
                   size="sm"
                   variant={streamQuality === "main" ? "select" : "default"}
@@ -646,10 +646,7 @@ export function RecordingView({
                     )
                   }
                 >
-                  <FaVideo className="size-5 text-secondary-foreground" />
-                  <span className="text-xs font-bold">
-                    {streamQuality === "main" ? "HD" : "SD"}
-                  </span>
+                  <span>{streamQuality === "main" ? "HD" : "SD"}</span>
                   {streamQuality === "main" &&
                     !mainStreamAvailableForCurrentTime && (
                       <span className="text-xs text-warning">!</span>
