@@ -4,7 +4,12 @@ from typing import Optional
 
 from pydantic import Field, PrivateAttr, model_validator
 
-from frigate.const import CACHE_DIR, CACHE_SEGMENT_FORMAT, REGEX_CAMERA_NAME
+from frigate.const import (
+    CACHE_DIR,
+    CACHE_SEGMENT_FORMAT,
+    EVENT_BUFFER_BASE_DIR,
+    REGEX_CAMERA_NAME,
+)
 from frigate.ffmpeg_presets import (
     parse_preset_hardware_acceleration_decode,
     parse_preset_hardware_acceleration_scale,
@@ -228,6 +233,54 @@ class CameraConfig(FrigateBaseModel):
 
         super().__init__(**config)
 
+    @model_validator(mode="after")
+    def validate_name_no_main_collision(self) -> "CameraConfig":
+        """Forbid camera names that collide with the mainstream event
+        segment filename convention ``<camera>@main@<ts>.mp4``.
+
+        The maintainer parses segment filenames as
+        ``prefix.rsplit('@', 1)`` -> if ``prefix`` ends with ``@main`` the
+        segment is tagged ``stream_quality='main'``. A camera literally
+        named ``back@main`` would therefore produce substream segments
+        that are silently re-tagged as main. We reject the config up
+        front so operators never hit that ambiguity on disk.
+        """
+        if self.name is None:
+            return self
+        if self.name.endswith("@main") or "@main@" in self.name:
+            raise ValueError(
+                f"Camera name {self.name!r} conflicts with the "
+                "mainstream event segment filename convention "
+                "'<camera>@main@<ts>.mp4'. Camera names must not end "
+                "with '@main' or contain '@main@'. Rename the camera."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_event_recording_role(self) -> "CameraConfig":
+        """Fail fast if event_recording is enabled but no record_events
+        ffmpeg input role is configured. Without a record_events input the
+        event recorder has nothing to drive — silently warning at runtime
+        leaves the user with a dead feature."""
+        if (
+            self.record is not None
+            and self.record.event_recording is not None
+            and self.record.event_recording.enabled
+        ):
+            roles = [
+                role.value if hasattr(role, "value") else role
+                for ffmpeg_input in self.ffmpeg.inputs
+                for role in ffmpeg_input.roles
+            ]
+            if "record_events" not in roles:
+                raise ValueError(
+                    f"Camera {self.name or '<unnamed>'} has "
+                    "record.event_recording.enabled=True but no ffmpeg input "
+                    "with the 'record_events' role. Add a record_events role "
+                    "pointing to the main stream, or disable event_recording."
+                )
+        return self
+
     @property
     def frame_shape(self) -> tuple[int, int]:
         return self.detect.height, self.detect.width
@@ -292,6 +345,62 @@ class CameraConfig(FrigateBaseModel):
             ffmpeg_output_args = (
                 record_args
                 + [f"{os.path.join(CACHE_DIR, self.name)}@{CACHE_SEGMENT_FORMAT}.mp4"]
+                + ffmpeg_output_args
+            )
+
+        if (
+            "record_events" in ffmpeg_input.roles
+            and self.record.enabled
+            and self.record.event_recording.enabled
+        ):
+            # Belt-and-suspenders: the `validate_name_no_main_collision`
+            # model_validator must have rejected this config earlier if the
+            # name would alias the main-segment filename convention. Assert
+            # here so a direct caller into `_get_ffmpeg_cmd` (e.g. a future
+            # profile override path) cannot bypass the validator silently.
+            assert self.name is not None and not (
+                self.name.endswith("@main") or "@main@" in self.name
+            ), (
+                f"Camera name {self.name!r} collides with the mainstream "
+                "event segment naming convention '<camera>@main@<ts>.mp4'."
+            )
+            record_events_args = get_ffmpeg_arg_list(
+                parse_preset_output_record(
+                    self.ffmpeg.output_args.record_events,
+                    self.ffmpeg.apple_compatibility,
+                )
+                or self.ffmpeg.output_args.record_events
+            )
+
+            # Force ~2s segments on the event-buffer output so the ring
+            # buffer has fine-grained pre-capture granularity. The standard
+            # record presets default to 10s which is too coarse for an
+            # event-driven buffer.
+            try:
+                seg_idx = record_events_args.index("-segment_time")
+                record_events_args[seg_idx + 1] = "2"
+            except (ValueError, IndexError):
+                record_events_args = ["-segment_time", "2"] + record_events_args
+
+            # Mainstream ffmpeg writes continuously into a per-camera ring
+            # buffer subdirectory under CACHE_DIR. The EventRecorder prunes
+            # this directory to ~pre_capture seconds when idle and promotes
+            # files into CACHE_DIR (as camera@main@ts.mp4) on detection
+            # triggers. This subdirectory is NOT scanned by the maintainer.
+            # Resolved at module import in const.py: prefers a dedicated
+            # /tmp/event_cache tmpfs (compose mount) and falls back to
+            # CACHE_DIR/event_buffer in dev/test.
+            event_buffer_dir = os.path.join(EVENT_BUFFER_BASE_DIR, self.name)
+            try:
+                os.makedirs(event_buffer_dir, exist_ok=True)
+            except OSError:
+                # CACHE_DIR may not exist in dry-run / config-validation
+                # contexts (e.g. tests). The EventRecorder will create the
+                # directory at runtime as a fallback.
+                pass
+            ffmpeg_output_args = (
+                record_events_args
+                + [f"{os.path.join(event_buffer_dir, CACHE_SEGMENT_FORMAT)}.mp4"]
                 + ffmpeg_output_args
             )
 

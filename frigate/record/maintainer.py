@@ -5,6 +5,7 @@ import datetime
 import logging
 import os
 import random
+import re
 import string
 import threading
 import time
@@ -41,6 +42,12 @@ from frigate.review.types import SeverityEnum
 from frigate.util.services import get_video_properties
 
 logger = logging.getLogger(__name__)
+
+# Event-recorder collision filenames append ``_<digits>`` to the timestamp
+# when multiple segments would otherwise share a name (see
+# ``frigate/record/event_recorder.py`` ``_promote_segment``). Strip the
+# suffix before feeding the timestamp to ``strptime``.
+_CACHE_TS_COLLISION_SUFFIX = re.compile(r"_\d+$")
 
 
 class SegmentInfo:
@@ -130,6 +137,9 @@ class RecordingMaintainer(threading.Thread):
                     camera = prefix
                 if not camera:
                     raise ValueError("Unexpected segment name format")
+                # Strip collision-counter suffix (e.g. ``..._1``) so the
+                # timestamp parses cleanly.
+                date = _CACHE_TS_COLLISION_SUFFIX.sub("", date)
             except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
@@ -207,6 +217,9 @@ class RecordingMaintainer(threading.Thread):
                     camera = prefix
                 if not camera:
                     raise ValueError("Unexpected segment name format")
+                # Strip collision-counter suffix (e.g. ``..._1``) so the
+                # timestamp parses cleanly.
+                date = _CACHE_TS_COLLISION_SUFFIX.sub("", date)
             except (ValueError, IndexError):
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
@@ -413,16 +426,15 @@ class RecordingMaintainer(threading.Thread):
         record_config = self.config.cameras[camera].record
 
         # Main stream event segments honor the configured event_recording
-        # retain mode (defaulting to "all" if unset). They bypass the
-        # continuous/motion/review gating because they are only produced
-        # while an event is active and should be kept wholesale.
+        # retain mode. They bypass the continuous/motion/review gating
+        # because they are only produced while an event is active (the
+        # EventRecorder thread already applied the trigger logic) and
+        # should be kept wholesale. The default mode is ``all``; an
+        # operator who opts into ``motion`` or ``active_objects`` gets the
+        # substream-derived gating below.
         if stream_quality == "main":
             event_retain = record_config.event_recording.retain
-            main_retain_mode = (
-                event_retain.mode
-                if event_retain and event_retain.mode is not None
-                else RetainModeEnum.all
-            )
+            main_retain_mode = event_retain.mode
             segment_stats = self.segment_stats(camera, start_time, end_time)
             if segment_stats.should_discard_segment(main_retain_mode):
                 self.drop_segment(cache_path)

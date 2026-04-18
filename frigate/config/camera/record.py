@@ -9,6 +9,7 @@ from frigate.review.types import SeverityEnum
 from ..base import FrigateBaseModel
 
 __all__ = [
+    "EventRecordingConfig",
     "RecordConfig",
     "RecordExportConfig",
     "RecordPreviewConfig",
@@ -67,6 +68,46 @@ class EventsConfig(FrigateBaseModel):
         default_factory=ReviewRetainConfig,
         title="Event retention",
         description="Retention settings for recordings of detection events.",
+    )
+
+
+class EventRecordingConfig(FrigateBaseModel):
+    enabled: bool = Field(
+        default=False,
+        title="Enable event recording",
+        description="Enable recording from the main stream during motion/detection events.",
+    )
+    pre_capture: int = Field(
+        default=15,
+        ge=0,
+        le=MAX_PRE_CAPTURE,
+        title="Pre-capture seconds",
+        description=(
+            "Number of seconds before the event to include in the main stream "
+            "recording. Implemented as a ring buffer: the mainstream ffmpeg "
+            "process runs continuously writing short segments into a tmpfs "
+            "buffer, and only the last pre_capture seconds are retained when "
+            "no event is active. On detection trigger the buffered segments "
+            "are promoted to persistent storage."
+        ),
+    )
+    post_capture: int = Field(
+        default=10,
+        ge=0,
+        title="Post-capture seconds",
+        description="Number of seconds after the event to include in the main stream recording.",
+    )
+    # The EventRecorder thread already applies the trigger logic (motion +
+    # object events), so only segments overlapping a real event window are
+    # ever promoted to the main cache. The maintainer must not re-gate those
+    # segments on motion/active-object stats derived from the substream's
+    # detect pipeline, so the retain mode defaults to ``all`` rather than
+    # ``motion``. Operators who want tighter retention can set ``mode``
+    # explicitly and opt into the substream-derived gating.
+    retain: ReviewRetainConfig = Field(
+        default_factory=lambda: ReviewRetainConfig(days=10, mode=RetainModeEnum.all),
+        title="Event recording retention",
+        description="Retention settings for main stream event recordings.",
     )
 
 
@@ -130,6 +171,11 @@ class RecordConfig(FrigateBaseModel):
         default_factory=EventsConfig,
         title="Alert retention",
         description="Recording retention settings for alert events including pre/post capture durations.",
+    )
+    event_recording: EventRecordingConfig = Field(
+        default_factory=EventRecordingConfig,
+        title="Event recording",
+        description="Settings for event-driven recording from the main stream during motion/detection events.",
     )
     export: RecordExportConfig = Field(
         default_factory=RecordExportConfig,

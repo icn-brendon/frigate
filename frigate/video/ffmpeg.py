@@ -467,6 +467,7 @@ class CameraWatchdog(threading.Thread):
                     )
 
                 p["logpipe"].dump()
+
                 p["process"] = start_or_restart_ffmpeg(
                     p["cmd"], self.logger, p["logpipe"], ffmpeg_process=p["process"]
                 )
