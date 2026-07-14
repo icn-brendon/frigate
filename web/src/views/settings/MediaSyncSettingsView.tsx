@@ -2,7 +2,6 @@ import Heading from "@/components/ui/heading";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Toaster } from "@/components/ui/sonner";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,13 +9,16 @@ import axios from "axios";
 import { toast } from "sonner";
 import { useJobStatus } from "@/api/ws";
 import { Switch } from "@/components/ui/switch";
-import { LuCheck, LuX } from "react-icons/lu";
+import { LuCheck, LuExternalLink, LuX } from "react-icons/lu";
 import { cn } from "@/lib/utils";
 import { formatUnixTimestampToDateTime } from "@/utils/dateUtil";
-import { MediaSyncStats } from "@/types/ws";
+import { MediaSyncResults, MediaSyncStats } from "@/types/ws";
+import { useDocDomain } from "@/hooks/use-doc-domain";
+import { Link } from "react-router-dom";
 
 export default function MediaSyncSettingsView() {
   const { t } = useTranslation("views/settings");
+  const { getLocaleDocUrl } = useDocDomain();
   const [selectedMediaTypes, setSelectedMediaTypes] = useState<string[]>([
     "all",
   ]);
@@ -35,7 +37,8 @@ export default function MediaSyncSettingsView() {
   ];
 
   // Subscribe to media sync status via WebSocket
-  const { payload: currentJob } = useJobStatus("media_sync");
+  const { payload: currentJob } = useJobStatus<MediaSyncResults>("media_sync");
+  const mediaSyncResults = currentJob?.results;
 
   const isJobRunning = Boolean(
     currentJob &&
@@ -101,20 +104,31 @@ export default function MediaSyncSettingsView() {
   return (
     <>
       <div className="flex size-full flex-col md:flex-row">
-        <Toaster position="top-center" closeButton={true} />
         <div className="scrollbar-container order-last mb-2 mt-2 flex h-full w-full flex-col overflow-y-auto px-2 md:order-none">
           <div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
             <div className="col-span-1">
               <Heading as="h4" className="mb-2 hidden md:block">
                 {t("maintenance.sync.title")}
               </Heading>
-
               <div className="max-w-6xl">
                 <div className="mb-5 mt-2 flex max-w-5xl flex-col gap-2 text-sm text-muted-foreground">
                   <p>{t("maintenance.sync.desc")}</p>
+
+                  <div className="flex items-center text-primary-variant">
+                    <Link
+                      to={getLocaleDocUrl(
+                        "configuration/record#syncing-media-files-with-disk",
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline"
+                    >
+                      {t("readTheDocumentation", { ns: "common" })}
+                      <LuExternalLink className="ml-2 inline-flex size-3" />
+                    </Link>
+                  </div>
                 </div>
               </div>
-
               <div className="space-y-6">
                 {/* Media Types Selection */}
                 <div>
@@ -301,7 +315,7 @@ export default function MediaSyncSettingsView() {
                       </span>
                     </div>
                   )}
-                  {currentJob?.results && (
+                  {mediaSyncResults && (
                     <div className="mt-2 space-y-2 md:mr-2">
                       <p className="text-sm font-medium text-muted-foreground">
                         {t("maintenance.sync.results")}
@@ -309,7 +323,7 @@ export default function MediaSyncSettingsView() {
                       <div className="rounded-md border border-secondary">
                         {/* Individual media type results */}
                         <div className="divide-y divide-secondary">
-                          {Object.entries(currentJob.results)
+                          {Object.entries(mediaSyncResults)
                             .filter(([key]) => key !== "totals")
                             .map(([mediaType, stats]) => {
                               const mediaStats = stats as MediaSyncStats;
@@ -386,7 +400,7 @@ export default function MediaSyncSettingsView() {
                             })}
                         </div>
                         {/* Totals */}
-                        {currentJob.results.totals && (
+                        {mediaSyncResults.totals && (
                           <div className="border-t border-secondary bg-background_alt p-3">
                             <p className="mb-1 font-medium">
                               {t("maintenance.sync.resultsFields.totals")}
@@ -399,7 +413,7 @@ export default function MediaSyncSettingsView() {
                                   )}
                                 </span>
                                 <span className="font-medium">
-                                  {currentJob.results.totals.files_checked}
+                                  {mediaSyncResults.totals.files_checked}
                                 </span>
                               </div>
                               <div className="flex justify-between">
@@ -410,12 +424,12 @@ export default function MediaSyncSettingsView() {
                                 </span>
                                 <span
                                   className={
-                                    currentJob.results.totals.orphans_found > 0
+                                    mediaSyncResults.totals.orphans_found > 0
                                       ? "font-medium text-yellow-500"
                                       : "font-medium"
                                   }
                                 >
-                                  {currentJob.results.totals.orphans_found}
+                                  {mediaSyncResults.totals.orphans_found}
                                 </span>
                               </div>
                               <div className="flex justify-between">
@@ -427,13 +441,12 @@ export default function MediaSyncSettingsView() {
                                 <span
                                   className={cn(
                                     "text-medium",
-                                    currentJob.results.totals.orphans_deleted >
-                                      0
+                                    mediaSyncResults.totals.orphans_deleted > 0
                                       ? "text-success"
                                       : "text-muted-foreground",
                                   )}
                                 >
-                                  {currentJob.results.totals.orphans_deleted}
+                                  {mediaSyncResults.totals.orphans_deleted}
                                 </span>
                               </div>
                             </div>

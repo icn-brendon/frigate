@@ -1,6 +1,7 @@
 import ActivityIndicator from "../indicators/activity-indicator";
 import { Button } from "../ui/button";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Progress } from "../ui/progress";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isMobile } from "react-device-detect";
 import { FiMoreVertical } from "react-icons/fi";
 import { Skeleton } from "../ui/skeleton";
@@ -31,6 +32,9 @@ import { FaFolder, FaVideo } from "react-icons/fa";
 import { HiSquare2Stack } from "react-icons/hi2";
 import { useCameraFriendlyName } from "@/hooks/use-camera-friendly-name";
 import useContextMenu from "@/hooks/use-contextmenu";
+import axios from "axios";
+import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 
 type CaseCardProps = {
   className: string;
@@ -122,11 +126,71 @@ export function ExportCard({
   onAssignToCase,
   onRemoveFromCase,
 }: ExportCardProps) {
-  const { t } = useTranslation(["views/exports"]);
+  const { t } = useTranslation(["views/exports", "views/replay"]);
+  const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const [loading, setLoading] = useState(
     exportedRecording.thumb_path.length > 0,
   );
+  const [isStartingReplay, setIsStartingReplay] = useState(false);
+
+  const handleDebugReplay = useCallback(() => {
+    setIsStartingReplay(true);
+
+    axios
+      .post("debug_replay/start_from_export", {
+        export_id: exportedRecording.id,
+      })
+      .then((response) => {
+        if (response.status === 202 || response.status === 200) {
+          navigate("/replay");
+        }
+      })
+      .catch((error) => {
+        const errorMessage =
+          error.response?.data?.message ||
+          error.response?.data?.detail ||
+          "Unknown error";
+
+        if (error.response?.status === 409) {
+          toast.error(t("dialog.toast.alreadyActive", { ns: "views/replay" }), {
+            position: "top-center",
+            closeButton: true,
+            dismissible: false,
+            action: (
+              <a
+                href={`${baseUrl}replay`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button>
+                  {t("dialog.toast.goToReplay", { ns: "views/replay" })}
+                </Button>
+              </a>
+            ),
+          });
+        } else {
+          toast.error(
+            t("dialog.toast.error", {
+              ns: "views/replay",
+              error: errorMessage,
+            }),
+            { position: "top-center" },
+          );
+        }
+      })
+      .finally(() => {
+        setIsStartingReplay(false);
+      });
+  }, [exportedRecording.id, navigate, t]);
+
+  // Resync the skeleton state whenever the backing export changes. The
+  // list keys by id now, so in practice the component remounts instead
+  // of receiving new props — but this keeps the card honest if a parent
+  // ever reuses the instance across different exports.
+  useEffect(() => {
+    setLoading(exportedRecording.thumb_path.length > 0);
+  }, [exportedRecording.thumb_path]);
 
   // selection
 
@@ -193,7 +257,7 @@ export function ExportCard({
           {editName && (
             <>
               <Input
-                className="text-md mt-3"
+                className="mt-3"
                 type="search"
                 placeholder={editName?.original}
                 value={
@@ -211,7 +275,6 @@ export function ExportCard({
               <DialogFooter>
                 <Button
                   aria-label={t("editExport.saveExport")}
-                  size="sm"
                   variant="select"
                   disabled={(editName?.update?.length ?? 0) == 0}
                   onClick={() => submitRename()}
@@ -257,7 +320,7 @@ export function ExportCard({
         )}
         {!exportedRecording.in_progress && !selectionMode && (
           <div className="absolute bottom-2 right-3 z-40">
-            <DropdownMenu modal={false}>
+            <DropdownMenu>
               <DropdownMenuTrigger>
                 <BlurredIconButton
                   aria-label={t("tooltip.editName")}
@@ -292,6 +355,21 @@ export function ExportCard({
                     {t("tooltip.downloadVideo")}
                   </a>
                 </DropdownMenuItem>
+                {isAdmin && (
+                  <DropdownMenuItem
+                    className="cursor-pointer"
+                    aria-label={t("title", { ns: "views/replay" })}
+                    disabled={isStartingReplay}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDebugReplay();
+                    }}
+                  >
+                    {isStartingReplay
+                      ? t("dialog.starting", { ns: "views/replay" })
+                      : t("title", { ns: "views/replay" })}
+                  </DropdownMenuItem>
+                )}
                 {isAdmin && onAssignToCase && (
                   <DropdownMenuItem
                     className="cursor-pointer"
@@ -392,8 +470,35 @@ export function ActiveExportJobCard({
       camera: cameraName,
     });
   }, [cameraName, job.name, t]);
-  const statusLabel =
-    job.status === "queued" ? t("jobCard.queued") : t("jobCard.running");
+
+  const step = job.current_step
+    ? job.current_step
+    : job.status === "queued"
+      ? "queued"
+      : "preparing";
+  const percent = Math.round(job.progress_percent ?? 0);
+
+  const stepLabel = useMemo(() => {
+    switch (step) {
+      case "queued":
+        return t("jobCard.queued");
+      case "preparing":
+        return t("jobCard.preparing");
+      case "copying":
+        return t("jobCard.copying");
+      case "encoding":
+        return t("jobCard.encoding");
+      case "encoding_retry":
+        return t("jobCard.encodingRetry");
+      case "finalizing":
+        return t("jobCard.finalizing");
+      default:
+        return t("jobCard.running");
+    }
+  }, [step, t]);
+
+  const hasDeterminateProgress =
+    step === "copying" || step === "encoding" || step === "encoding_retry";
 
   return (
     <div
@@ -402,11 +507,20 @@ export function ActiveExportJobCard({
         className,
       )}
     >
-      <div className="absolute right-3 top-3 z-30 rounded-full bg-selected/90 px-2 py-1 text-xs text-selected-foreground">
-        {statusLabel}
-      </div>
-      <div className="flex flex-col items-center gap-3 px-6 text-center">
-        <ActivityIndicator />
+      <div className="flex w-full max-w-xs flex-col items-center gap-2 space-y-2 px-6 text-center">
+        <div className="text-xs text-muted-foreground">
+          {stepLabel}
+          {hasDeterminateProgress && ` · ${percent}%`}
+        </div>
+        {step === "queued" ? (
+          <ActivityIndicator className="size-5" />
+        ) : hasDeterminateProgress ? (
+          <Progress value={percent} className="h-2 w-full" />
+        ) : (
+          <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+            <div className="absolute inset-y-0 left-0 w-1/2 animate-pulse bg-primary" />
+          </div>
+        )}
         <div className="text-sm font-medium text-primary">{displayName}</div>
       </div>
     </div>

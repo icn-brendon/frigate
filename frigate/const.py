@@ -25,11 +25,13 @@ EVENT_BUFFER_BASE_DIR = (
     else os.path.join(CACHE_DIR, "event_buffer")
 )
 REPLAY_CAMERA_PREFIX = "_replay_"
-REPLAY_DIR = os.path.join(CACHE_DIR, "replay")
+REPLAY_DIR = os.path.join(CLIPS_DIR, "replay")
 PLUS_ENV_VAR = "PLUS_API_KEY"
 PLUS_API_HOST = "https://api.frigate.video"
 
 SHM_FRAMES_VAR = "SHM_MAX_FRAMES"
+
+REDACTED_CREDENTIAL_SENTINEL = "__FRIGATE_SAVED_CREDENTIAL__"
 
 # Attribute & Object constants
 

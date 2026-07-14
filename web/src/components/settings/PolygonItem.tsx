@@ -19,17 +19,17 @@ import { LuCopy, LuPencil } from "react-icons/lu";
 import { FaDrawPolygon, FaObjectGroup } from "react-icons/fa";
 import { BsPersonBoundingBox } from "react-icons/bs";
 import { HiOutlineDotsVertical, HiTrash } from "react-icons/hi";
-import { isDesktop, isMobile } from "react-device-detect";
+import { isMobile } from "react-device-detect";
 import { toRGBColorString } from "@/utils/canvasUtil";
 import { Polygon, PolygonType } from "@/types/canvas";
 import { useCallback, useMemo, useState } from "react";
 import axios from "axios";
-import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { reviewQueries } from "@/utils/zoneEdutUtil";
 import IconWrapper from "../ui/icon-wrapper";
+import { buttonVariants } from "@/components/ui/button";
 import { Trans, useTranslation } from "react-i18next";
 import ActivityIndicator from "../indicators/activity-indicator";
 import { cn } from "@/lib/utils";
@@ -368,8 +368,6 @@ export default function PolygonItem({
 
   return (
     <>
-      <Toaster position="top-center" closeButton={true} />
-
       <div
         key={index}
         className="transition-background relative my-1.5 flex flex-row items-center justify-between rounded-lg p-1 duration-100"
@@ -511,7 +509,7 @@ export default function PolygonItem({
                 {t("button.cancel", { ns: "common" })}
               </AlertDialogCancel>
               <AlertDialogAction
-                className="bg-destructive text-white hover:bg-destructive/90"
+                className={cn(buttonVariants({ variant: "destructive" }))}
                 onClick={handleDelete}
               >
                 {polygon.polygonSource === "override"
@@ -524,7 +522,7 @@ export default function PolygonItem({
 
         {isMobile && (
           <>
-            <DropdownMenu modal={!isDesktop}>
+            <DropdownMenu>
               <DropdownMenuTrigger>
                 <HiOutlineDotsVertical className="size-5" />
               </DropdownMenuTrigger>

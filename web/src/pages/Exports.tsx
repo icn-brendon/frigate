@@ -1,9 +1,11 @@
 import { baseUrl } from "@/api/baseUrl";
+import { useJobStatus } from "@/api/ws";
 import {
   ActiveExportJobCard,
   CaseCard,
   ExportCard,
 } from "@/components/card/ExportCard";
+import ActivityIndicator from "@/components/indicators/activity-indicator";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -56,6 +58,7 @@ import { useTranslation } from "react-i18next";
 
 import { IoMdArrowRoundBack } from "react-icons/io";
 import {
+  LuDownload,
   LuFolderPlus,
   LuFolderX,
   LuPencil,
@@ -87,23 +90,45 @@ function Exports() {
   // Data
 
   const { data: cases, mutate: updateCases } = useSWR<ExportCase[]>("cases");
-  const { data: activeExportJobs } = useSWR<ExportJob[]>("jobs/export", {
-    refreshInterval: (latestJobs) => ((latestJobs ?? []).length > 0 ? 2000 : 0),
-  });
-  // Keep polling exports while there are queued/running jobs OR while any
-  // existing export is still marked in_progress. Without the second clause,
-  // a stale in_progress=true snapshot can stick if the activeExportJobs poll
-  // clears before the rawExports poll fires — SWR cancels the pending
-  // rawExports refresh and the UI freezes on spinners until a manual reload.
+
+  // The HTTP fetch hydrates the page on first paint and on focus. Once the
+  // WebSocket is connected, the `job_state` topic delivers progress updates
+  // in real time, so periodic polling here would only add noise.
+  const { data: pollExportJobs, mutate: updateActiveJobs } = useSWR<
+    ExportJob[]
+  >("jobs/export", { refreshInterval: 0 });
+
+  const { payload: exportJobState } = useJobStatus<{ jobs: ExportJob[] }>(
+    "export",
+  );
+  const wsExportJobs = useMemo<ExportJob[]>(
+    () => exportJobState?.results?.jobs ?? [],
+    [exportJobState],
+  );
+
+  // Merge: a job present in the WS payload is authoritative (it has the
+  // freshest progress); the SWR snapshot fills in jobs that haven't yet
+  // arrived over the socket (e.g. before the first WS message after a
+  // page load). Once we've seen at least one WS message, we trust the WS
+  // payload as the complete active set.
+  const hasWsState = exportJobState !== null;
+  const activeExportJobs = useMemo<ExportJob[]>(() => {
+    if (hasWsState) {
+      return wsExportJobs;
+    }
+    return pollExportJobs ?? [];
+  }, [hasWsState, wsExportJobs, pollExportJobs]);
+
+  // Keep polling exports while any existing export is still marked
+  // in_progress so the UI flips from spinner to playable card without a
+  // manual reload. Once active jobs disappear from the WS feed we also
+  // mutate() below to fetch newly-completed exports immediately.
   const { data: rawExports, mutate: updateExports } = useSWR<Export[]>(
     exportSearchParams && Object.keys(exportSearchParams).length > 0
       ? ["exports", exportSearchParams]
       : "exports",
     {
       refreshInterval: (latestExports) => {
-        if ((activeExportJobs?.length ?? 0) > 0) {
-          return 2000;
-        }
         if ((latestExports ?? []).some((exp) => exp.in_progress)) {
           return 2000;
         }
@@ -112,22 +137,40 @@ function Exports() {
     },
   );
 
+  // When one or more active jobs disappear from the WS feed, refresh the
+  // exports list so newly-finished items appear without waiting for focus-
+  // based SWR revalidation. Clear the HTTP jobs snapshot once the live set is
+  // empty so a stale poll result does not resurrect completed jobs.
+  const previousActiveJobIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const previousIds = previousActiveJobIdsRef.current;
+    const currentIds = new Set(activeExportJobs.map((job) => job.id));
+    const removedJob = Array.from(previousIds).some(
+      (id) => !currentIds.has(id),
+    );
+
+    if (removedJob) {
+      updateExports();
+      updateCases();
+    }
+
+    if (previousIds.size > 0 && currentIds.size === 0) {
+      updateActiveJobs([], false);
+    }
+    previousActiveJobIdsRef.current = currentIds;
+  }, [activeExportJobs, updateExports, updateCases, updateActiveJobs]);
+
   const visibleActiveJobs = useMemo<ExportJob[]>(() => {
-    const existingExportIds = new Set((rawExports ?? []).map((exp) => exp.id));
     const filteredCameras = exportFilter?.cameras;
 
     return (activeExportJobs ?? []).filter((job) => {
-      if (existingExportIds.has(job.id)) {
-        return false;
-      }
-
       if (filteredCameras && filteredCameras.length > 0) {
         return filteredCameras.includes(job.camera);
       }
 
       return true;
     });
-  }, [activeExportJobs, exportFilter?.cameras, rawExports]);
+  }, [activeExportJobs, exportFilter?.cameras]);
 
   const activeJobsByCase = useMemo<{ [caseId: string]: ExportJob[] }>(() => {
     const grouped: { [caseId: string]: ExportJob[] } = {};
@@ -144,9 +187,26 @@ function Exports() {
     return grouped;
   }, [visibleActiveJobs]);
 
+  // The backend inserts the Export row with in_progress=True before the
+  // FFmpeg encode kicks off, so the same id is briefly present in BOTH
+  // rawExports and the active job list. The ActiveExportJobCard renders
+  // step + percent; the ExportCard would render a binary spinner. To
+  // avoid that downgrade, hide the rawExport entry while there's a
+  // matching active job — once the job leaves the active list the
+  // exports SWR refresh kicks in and the regular card takes over.
+  const activeJobIds = useMemo<Set<string>>(
+    () => new Set(visibleActiveJobs.map((job) => job.id)),
+    [visibleActiveJobs],
+  );
+
+  const visibleExports = useMemo<Export[]>(
+    () => (rawExports ?? []).filter((exp) => !activeJobIds.has(exp.id)),
+    [activeJobIds, rawExports],
+  );
+
   const exportsByCase = useMemo<{ [caseId: string]: Export[] }>(() => {
     const grouped: { [caseId: string]: Export[] } = {};
-    (rawExports ?? []).forEach((exp) => {
+    visibleExports.forEach((exp) => {
       const caseId = exp.export_case ?? exp.export_case_id ?? "none";
       if (!grouped[caseId]) {
         grouped[caseId] = [];
@@ -155,7 +215,7 @@ function Exports() {
       grouped[caseId].push(exp);
     });
     return grouped;
-  }, [rawExports]);
+  }, [visibleExports]);
 
   const filteredCases = useMemo<ExportCase[]>(() => {
     if (!cases) return [];
@@ -184,6 +244,34 @@ function Exports() {
     updateCases();
   }, [updateExports, updateCases]);
 
+  // Deletes one or more exports and keeps the UI in sync. SWR's default
+  // mutate() keeps the stale list visible until the revalidation GET
+  // returns, which can be seconds for large batches — long enough for
+  // users to click on a card whose underlying file is already gone.
+  // Strip the deleted ids from the cache up front, then fire the POST,
+  // then revalidate to reconcile with server truth.
+  const deleteExports = useCallback(
+    async (ids: string[]): Promise<void> => {
+      const idSet = new Set(ids);
+      const removeDeleted = (current: Export[] | undefined) =>
+        current ? current.filter((exp) => !idSet.has(exp.id)) : current;
+
+      await updateExports(removeDeleted, { revalidate: false });
+
+      try {
+        await axios.post("exports/delete", { ids });
+        await updateExports();
+        await updateCases();
+      } catch (err) {
+        // On failure, pull fresh state from the server so any items that
+        // weren't actually deleted reappear in the UI.
+        await updateExports();
+        throw err;
+      }
+    },
+    [updateExports, updateCases],
+  );
+
   // Search
 
   const [search, setSearch] = useState("");
@@ -208,7 +296,9 @@ function Exports() {
       return false;
     }
 
-    setSelected(rawExports.find((exp) => exp.id == id));
+    // Use visibleExports so deep links to a still-encoding id don't try
+    // to open a player against a half-written video file.
+    setSelected(visibleExports.find((exp) => exp.id == id));
     return true;
   });
 
@@ -260,7 +350,7 @@ function Exports() {
     const currentExports = selectedCaseId
       ? exportsByCase[selectedCaseId] || []
       : exports;
-    const visibleExports = currentExports.filter((e) => {
+    const selectable = currentExports.filter((e) => {
       if (e.in_progress) return false;
       if (!search) return true;
       return e.name
@@ -268,8 +358,8 @@ function Exports() {
         .replaceAll("_", " ")
         .includes(search.toLowerCase());
     });
-    if (selectedExports.length < visibleExports.length) {
-      setSelectedExports(visibleExports);
+    if (selectedExports.length < selectable.length) {
+      setSelectedExports(selectable);
     } else {
       setSelectedExports([]);
     }
@@ -293,15 +383,19 @@ function Exports() {
       return;
     }
 
-    axios
-      .post("exports/delete", { ids: [deleteClip.file] })
-      .then((response) => {
-        if (response.status == 200) {
-          setDeleteClip(undefined);
-          mutate();
-        }
+    deleteExports([deleteClip.file])
+      .then(() => setDeleteClip(undefined))
+      .catch((error) => {
+        const errorMessage =
+          error?.response?.data?.message ||
+          error?.response?.data?.detail ||
+          "Unknown error";
+        toast.error(
+          t("bulkToast.error.deleteFailed", { errorMessage: errorMessage }),
+          { position: "top-center" },
+        );
       });
-  }, [deleteClip, mutate]);
+  }, [deleteClip, deleteExports, t]);
 
   const onHandleRename = useCallback(
     (id: string, update: string) => {
@@ -514,7 +608,6 @@ function Exports() {
               {t("button.cancel", { ns: "common" })}
             </AlertDialogCancel>
             <Button
-              className="text-white"
               aria-label="Delete Export"
               variant="destructive"
               onClick={() => onHandleDelete()}
@@ -564,7 +657,6 @@ function Exports() {
               {t("button.cancel", { ns: "common" })}
             </AlertDialogCancel>
             <Button
-              className="text-white"
               variant="destructive"
               onClick={() => void handleDeleteCase()}
             >
@@ -629,6 +721,7 @@ function Exports() {
             cases={cases}
             currentCaseId={selectedCaseId}
             mutate={mutate}
+            deleteExports={deleteExports}
           />
         ) : (
           <>
@@ -649,7 +742,7 @@ function Exports() {
                 </Button>
               )}
               <Input
-                className="text-md w-full bg-muted md:w-1/2"
+                className="w-full bg-muted md:w-1/2"
                 placeholder={t("search")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -684,54 +777,76 @@ function Exports() {
                   filters={["cameras"]}
                   onUpdateFilter={setExportFilter}
                 />
-                {isAdmin && (
-                  <div className="flex items-center gap-1 md:gap-2">
+                <div className="flex items-center gap-1 md:gap-2">
+                  {(exportsByCase[selectedCase.id]?.length ?? 0) > 0 && (
                     <Button
+                      asChild
                       className="flex items-center gap-2 p-2"
                       size="sm"
-                      aria-label={t("toolbar.addExport")}
-                      onClick={() => setCaseForAddExport(selectedCase)}
+                      aria-label={t("button.download", { ns: "common" })}
                     >
-                      <LuPlus className="text-secondary-foreground" />
-                      {!isMobile && (
-                        <div className="text-primary">
-                          {t("toolbar.addExport")}
-                        </div>
-                      )}
+                      <a
+                        download
+                        href={`${baseUrl}api/cases/${selectedCase.id}/download`}
+                      >
+                        <LuDownload className="text-secondary-foreground" />
+                        {!isMobile && (
+                          <div className="text-primary">
+                            {t("button.download", { ns: "common" })}
+                          </div>
+                        )}
+                      </a>
                     </Button>
-                    <Button
-                      className="flex items-center gap-2 p-2"
-                      size="sm"
-                      aria-label={t("toolbar.editCase")}
-                      onClick={() =>
-                        setCaseDialog({
-                          mode: "edit",
-                          exportCase: selectedCase,
-                        })
-                      }
-                    >
-                      <LuPencil className="text-secondary-foreground" />
-                      {!isMobile && (
-                        <div className="text-primary">
-                          {t("toolbar.editCase")}
-                        </div>
-                      )}
-                    </Button>
-                    <Button
-                      className="flex items-center gap-2 p-2"
-                      size="sm"
-                      aria-label={t("toolbar.deleteCase")}
-                      onClick={() => setCaseToDelete(selectedCase)}
-                    >
-                      <LuTrash2 className="text-secondary-foreground" />
-                      {!isMobile && (
-                        <div className="text-primary">
-                          {t("toolbar.deleteCase")}
-                        </div>
-                      )}
-                    </Button>
-                  </div>
-                )}
+                  )}
+                  {isAdmin && (
+                    <>
+                      <Button
+                        className="flex items-center gap-2 p-2"
+                        size="sm"
+                        aria-label={t("toolbar.addExport")}
+                        onClick={() => setCaseForAddExport(selectedCase)}
+                      >
+                        <LuPlus className="text-secondary-foreground" />
+                        {!isMobile && (
+                          <div className="text-primary">
+                            {t("toolbar.addExport")}
+                          </div>
+                        )}
+                      </Button>
+                      <Button
+                        className="flex items-center gap-2 p-2"
+                        size="sm"
+                        aria-label={t("toolbar.editCase")}
+                        onClick={() =>
+                          setCaseDialog({
+                            mode: "edit",
+                            exportCase: selectedCase,
+                          })
+                        }
+                      >
+                        <LuPencil className="text-secondary-foreground" />
+                        {!isMobile && (
+                          <div className="text-primary">
+                            {t("toolbar.editCase")}
+                          </div>
+                        )}
+                      </Button>
+                      <Button
+                        className="flex items-center gap-2 p-2"
+                        size="sm"
+                        aria-label={t("toolbar.deleteCase")}
+                        onClick={() => setCaseToDelete(selectedCase)}
+                      >
+                        <LuTrash2 className="text-secondary-foreground" />
+                        {!isMobile && (
+                          <div className="text-primary">
+                            {t("toolbar.deleteCase")}
+                          </div>
+                        )}
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </>
@@ -748,6 +863,7 @@ function Exports() {
           search={search}
           selectedExports={selectedExports}
           selectionMode={selectionMode}
+          isLoading={cases === undefined || rawExports === undefined}
           onSelectExport={onSelectExport}
           setSelected={setSelected}
           renameClip={onHandleRename}
@@ -766,6 +882,7 @@ function Exports() {
           activeJobs={activeJobsByCase["none"] || []}
           selectedExports={selectedExports}
           selectionMode={selectionMode}
+          isLoading={cases === undefined || rawExports === undefined}
           onSelectExport={onSelectExport}
           setSelectedCaseId={setSelectedCaseId}
           setSelected={setSelected}
@@ -787,6 +904,7 @@ type AllExportsViewProps = {
   activeJobs: ExportJob[];
   selectedExports: Export[];
   selectionMode: boolean;
+  isLoading: boolean;
   onSelectExport: (e: Export) => void;
   setSelectedCaseId: (id: string) => void;
   setSelected: (e: Export) => void;
@@ -803,6 +921,7 @@ function AllExportsView({
   activeJobs,
   selectedExports,
   selectionMode,
+  isLoading,
   onSelectExport,
   setSelectedCaseId,
   setSelected,
@@ -893,7 +1012,7 @@ function AllExportsView({
                 ))}
                 {filteredExports.map((item) => (
                   <ExportCard
-                    key={item.name}
+                    key={item.id}
                     className=""
                     exportedRecording={item}
                     isSelected={selectedExports.some((e) => e.id === item.id)}
@@ -911,6 +1030,8 @@ function AllExportsView({
             </div>
           )}
         </div>
+      ) : isLoading ? (
+        <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
       ) : (
         <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
           <LuFolderX className="size-16" />
@@ -930,6 +1051,7 @@ type CaseViewProps = {
   search: string;
   selectedExports: Export[];
   selectionMode: boolean;
+  isLoading: boolean;
   onSelectExport: (e: Export) => void;
   setSelected: (e: Export) => void;
   renameClip: (id: string, update: string) => void;
@@ -947,6 +1069,7 @@ function CaseView({
   search,
   selectedExports,
   selectionMode,
+  isLoading,
   onSelectExport,
   setSelected,
   renameClip,
@@ -1085,6 +1208,10 @@ function CaseView({
             />
           ))}
         </div>
+      ) : isLoading ? (
+        <div className="flex min-h-[16rem] flex-1 items-center justify-center">
+          <ActivityIndicator />
+        </div>
       ) : (
         <div className="flex min-h-[16rem] flex-col items-center justify-center p-6 text-center">
           <LuFolderX className="size-12" />
@@ -1148,8 +1275,8 @@ function CaseEditorDialog({
             value={description}
             onChange={(event) => setDescription(event.target.value)}
           />
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={onClose}>
+          <DialogFooter>
+            <Button onClick={onClose}>
               {t("button.cancel", { ns: "common" })}
             </Button>
             <Button
@@ -1166,7 +1293,7 @@ function CaseEditorDialog({
                 ? t("button.save", { ns: "common" })
                 : t("toolbar.newCase")}
             </Button>
-          </div>
+          </DialogFooter>
         </div>
       </DialogContent>
     </Dialog>
@@ -1298,13 +1425,12 @@ function CaseAddExportDialog({
             )}
           </div>
         </div>
-        <DialogFooter className="flex-row justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>
+        <DialogFooter>
+          <Button onClick={onClose}>
             {t("button.cancel", { ns: "common" })}
           </Button>
           <Button
             variant="select"
-            size="sm"
             disabled={selectedIds.length === 0 || isAdding}
             onClick={() => void handleAdd()}
           >

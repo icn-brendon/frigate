@@ -7,7 +7,7 @@ import math
 import os
 import subprocess as sp
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path as FilePath
 from typing import Any
 from urllib.parse import unquote
@@ -73,6 +73,19 @@ def recording_row_is_main(row) -> bool:
 
 
 router = APIRouter(tags=[Tags.media])
+
+
+def _resolve_cache_age(max_cache_age: int) -> int:
+    """Return max_cache_age as an int.
+
+    When a media handler is invoked directly by another handler instead of
+    through its route, FastAPI doesn't resolve the Query() default and
+    max_cache_age arrives as the Query object; fall back to its int default.
+    """
+    if isinstance(max_cache_age, int):
+        return max_cache_age
+
+    return max_cache_age.default
 
 
 @router.get("/{camera_name}", dependencies=[Depends(require_camera_access)])
@@ -189,12 +202,10 @@ async def latest_frame(
     }
     quality_params = get_image_quality_params(extension.value, params.quality)
 
-    if camera_name in request.app.frigate_config.cameras:
+    camera_config = request.app.frigate_config.cameras.get(camera_name)
+    if camera_config is not None:
         frame = frame_processor.get_current_frame(camera_name, draw_options)
-        retry_interval = float(
-            request.app.frigate_config.cameras.get(camera_name).ffmpeg.retry_interval
-            or 10
-        )
+        retry_interval = float(camera_config.ffmpeg.retry_interval or 10)
 
         is_offline = False
         if frame is None or datetime.now().timestamp() > (
@@ -318,10 +329,8 @@ async def get_snapshot_from_recording(
                 Recordings.start_time,
             )
             .where(
-                (
-                    (frame_time >= Recordings.start_time)
-                    & (frame_time <= Recordings.end_time)
-                )
+                (frame_time >= Recordings.start_time)
+                & (frame_time <= Recordings.end_time)
             )
             .where(Recordings.camera == camera_name)
             .order_by(Recordings.start_time.desc())
@@ -339,10 +348,8 @@ async def get_snapshot_from_recording(
                     Recordings.start_time,
                 )
                 .where(
-                    (
-                        (frame_time >= Recordings.start_time)
-                        & (frame_time <= Recordings.end_time)
-                    )
+                    (frame_time >= Recordings.start_time)
+                    & (frame_time <= Recordings.end_time)
                 )
                 .where(Recordings.camera == camera_name)
                 .order_by(Recordings.start_time.desc())
@@ -402,10 +409,7 @@ async def submit_recording_snapshot_to_plus(
             Recordings.start_time,
         )
         .where(
-            (
-                (frame_time >= Recordings.start_time)
-                & (frame_time <= Recordings.end_time)
-            )
+            (frame_time >= Recordings.start_time) & (frame_time <= Recordings.end_time)
         )
         .where(Recordings.camera == camera_name)
         .order_by(Recordings.start_time.desc())
@@ -430,7 +434,9 @@ async def submit_recording_snapshot_to_plus(
             )
 
         nd = cv2.imdecode(np.frombuffer(image_data, dtype=np.int8), cv2.IMREAD_COLOR)
-        request.app.frigate_config.plus_api.upload_image(nd, camera_name)
+        await asyncio.to_thread(
+            request.app.frigate_config.plus_api.upload_image, nd, camera_name
+        )
 
         return JSONResponse(
             content={
@@ -760,7 +766,7 @@ async def vod_hour(
 ):
     parts = year_month.split("-")
     start_date = (
-        datetime(int(parts[0]), int(parts[1]), day, hour, tzinfo=timezone.utc)
+        datetime(int(parts[0]), int(parts[1]), day, hour, tzinfo=UTC)
         - datetime.now(pytz.timezone(tz_name.replace(",", "/"))).utcoffset()
     )
     end_date = start_date + timedelta(hours=1) - timedelta(milliseconds=1)
@@ -993,7 +999,7 @@ async def event_thumbnail(
         thumbnail_bytes,
         media_type=extension.get_mime_type(),
         headers={
-            "Cache-Control": f"private, max-age={max_cache_age}"
+            "Cache-Control": f"private, max-age={_resolve_cache_age(max_cache_age)}"
             if event_complete
             else "no-store",
         },
@@ -1327,14 +1333,14 @@ async def event_preview(request: Request, event_id: str):
     end_ts = start_ts + (
         min(event.end_time - event.start_time, 20) if event.end_time else 20
     )
-    return preview_gif(request, event.camera, start_ts, end_ts)
+    return await preview_gif(request, event.camera, start_ts, end_ts)
 
 
 @router.get(
     "/{camera_name}/start/{start_ts}/end/{end_ts}/preview.gif",
     dependencies=[Depends(require_camera_access)],
 )
-def preview_gif(
+async def preview_gif(
     request: Request,
     camera_name: str,
     start_ts: float,
@@ -1397,7 +1403,8 @@ def preview_gif(
             "-",
         ]
 
-        process = sp.run(
+        process = await asyncio.to_thread(
+            sp.run,
             ffmpeg_cmd,
             capture_output=True,
         )
@@ -1423,12 +1430,17 @@ def preview_gif(
         file_start = f"preview_{camera_name}-"
         start_file = f"{file_start}{start_ts}.{PREVIEW_FRAME_TYPE}"
         end_file = f"{file_start}{end_ts}.{PREVIEW_FRAME_TYPE}"
+
+        camera_files = [
+            entry.name
+            for entry in os.scandir(preview_dir)
+            if entry.name.startswith(file_start)
+        ]
+        camera_files.sort()
+
         selected_previews = []
 
-        for file in sorted(os.listdir(preview_dir)):
-            if not file.startswith(file_start):
-                continue
-
+        for file in camera_files:
             if file < start_file:
                 continue
 
@@ -1471,7 +1483,8 @@ def preview_gif(
             "-",
         ]
 
-        process = sp.run(
+        process = await asyncio.to_thread(
+            sp.run,
             ffmpeg_cmd,
             input=str.encode("\n".join(selected_previews)),
             capture_output=True,
@@ -1490,7 +1503,7 @@ def preview_gif(
         gif_bytes,
         media_type="image/gif",
         headers={
-            "Cache-Control": f"private, max-age={max_cache_age}",
+            "Cache-Control": f"private, max-age={_resolve_cache_age(max_cache_age)}",
             "Content-Type": "image/gif",
         },
     )
@@ -1500,7 +1513,7 @@ def preview_gif(
     "/{camera_name}/start/{start_ts}/end/{end_ts}/preview.mp4",
     dependencies=[Depends(require_camera_access)],
 )
-def preview_mp4(
+async def preview_mp4(
     request: Request,
     camera_name: str,
     start_ts: float,
@@ -1580,7 +1593,8 @@ def preview_mp4(
             path,
         ]
 
-        process = sp.run(
+        process = await asyncio.to_thread(
+            sp.run,
             ffmpeg_cmd,
             capture_output=True,
         )
@@ -1605,12 +1619,17 @@ def preview_mp4(
         file_start = f"preview_{camera_name}-"
         start_file = f"{file_start}{start_ts}.{PREVIEW_FRAME_TYPE}"
         end_file = f"{file_start}{end_ts}.{PREVIEW_FRAME_TYPE}"
+
+        camera_files = [
+            entry.name
+            for entry in os.scandir(preview_dir)
+            if entry.name.startswith(file_start)
+        ]
+        camera_files.sort()
+
         selected_previews = []
 
-        for file in sorted(os.listdir(preview_dir)):
-            if not file.startswith(file_start):
-                continue
-
+        for file in camera_files:
             if file < start_file:
                 continue
 
@@ -1651,7 +1670,8 @@ def preview_mp4(
             path,
         ]
 
-        process = sp.run(
+        process = await asyncio.to_thread(
+            sp.run,
             ffmpeg_cmd,
             input=str.encode("\n".join(selected_previews)),
             capture_output=True,
@@ -1666,7 +1686,7 @@ def preview_mp4(
 
     headers = {
         "Content-Description": "File Transfer",
-        "Cache-Control": f"private, max-age={max_cache_age}",
+        "Cache-Control": f"private, max-age={_resolve_cache_age(max_cache_age)}",
         "Content-Type": "video/mp4",
         "Content-Length": str(os.path.getsize(path)),
         # nginx: https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_ignore_headers
@@ -1704,9 +1724,9 @@ async def review_preview(
     )
 
     if format == "gif":
-        return preview_gif(request, review.camera, start_ts, end_ts)
+        return await preview_gif(request, review.camera, start_ts, end_ts)
     else:
-        return preview_mp4(request, review.camera, start_ts, end_ts)
+        return await preview_mp4(request, review.camera, start_ts, end_ts)
 
 
 @router.get(

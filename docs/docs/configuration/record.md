@@ -11,6 +11,12 @@ Recordings can be enabled and are stored at `/media/frigate/recordings`. The fol
 
 New recording segments are written from the camera stream to cache, they are only moved to disk if they match the setup recording retention policy.
 
+:::tip
+
+To keep a specific clip beyond your retention window, [export](/usage/exports) it rather than increasing retention for the whole camera. Exports are saved separately and are never removed by retention.
+
+:::
+
 H265 recordings can be viewed in Chrome 108+, Edge and Safari only. All other browsers require recordings to be encoded with H264.
 
 ## Common recording configurations
@@ -164,9 +170,9 @@ record:
 
 The `pre_capture` and `post_capture` values define the **time window** around a review item, but only recording segments that also match the configured **retention mode** are actually kept on disk.
 
-- **`mode: all`** — Retains every segment within the capture window, regardless of whether motion was detected.
-- **`mode: motion`** (default) — Only retains segments within the capture window that contain motion. This includes segments with active tracked objects, since object motion implies motion. Segments without any motion are discarded even if they fall within the pre/post capture range.
-- **`mode: active_objects`** — Only retains segments within the capture window where tracked objects were actively moving. Segments with general motion but no active objects are discarded.
+- **`mode: all`**: Retains every segment within the capture window, regardless of whether motion was detected.
+- **`mode: motion`** (default): Only retains segments within the capture window that contain motion. This includes segments with active tracked objects, since object motion implies motion. Segments without any motion are discarded even if they fall within the pre/post capture range.
+- **`mode: active_objects`**: Only retains segments within the capture window where tracked objects were actively moving. Segments with general motion but no active objects are discarded.
 
 This means that with the default `motion` mode, you may see less footage than the configured pre/post capture duration if parts of the capture window had no motion.
 
@@ -191,11 +197,7 @@ Because recording segments are written in 10 second chunks, pre-capture timing d
 
 ### Where to view pre/post capture footage
 
-Pre and post capture footage is included in the **recording timeline**, visible in the History view. Note that pre/post capture settings only affect which recording segments are **retained on disk** — they do not change the start and end points shown in the UI. The History view will still center on the review item's actual time range, but you can scrub backward and forward through the retained pre/post capture footage on the timeline. The Explore view shows object-specific clips that are trimmed to when the tracked object was actually visible, so pre/post capture time will not be reflected there.
-
-## Will Frigate delete old recordings if my storage runs out?
-
-As of Frigate 0.12 if there is less than an hour left of storage, the oldest 2 hours of recordings will be deleted.
+Pre and post capture footage is included in the **recording timeline**, visible in the History view. Note that pre/post capture settings only affect which recording segments are **retained on disk**. They do not change the start and end points shown in the UI. The History view will still center on the review item's actual time range, but you can scrub backward and forward through the retained pre/post capture footage on the timeline. The Explore view shows object-specific clips that are trimmed to when the tracked object was actually visible, so pre/post capture time will not be reflected there.
 
 ## Configuring Recording Retention
 
@@ -281,31 +283,52 @@ Using Frigate UI, Home Assistant, or MQTT, cameras can be automated to only reco
 
 Footage can be exported from Frigate by right-clicking (desktop) or long pressing (mobile) on a review item in the Review pane or by clicking the Export button in the History view. Exported footage is then organized and searchable through the Export view, accessible from the main navigation bar.
 
-### Time-lapse export
+### Custom export with FFmpeg arguments
 
-Time lapse exporting is available only via the [HTTP API](../integrations/api/export-recording-export-camera-name-start-start-time-end-end-time-post.api.mdx).
+For advanced use cases, the [custom export HTTP API](../integrations/api/export-recording-custom-export-custom-camera-name-start-start-time-end-end-time-post.api.mdx) lets you pass custom FFmpeg arguments when exporting a recording:
 
-When exporting a time-lapse the default speed-up is 25x with 30 FPS. This means that every 25 seconds of (real-time) recording is condensed into 1 second of time-lapse video (always without audio) with a smoothness of 30 FPS.
-
-To configure the speed-up factor, the frame rate and further custom settings, use the `timelapse_args` parameter. The below configuration example would change the time-lapse speed to 60x (for fitting 1 hour of recording into 1 minute of time-lapse) with 25 FPS:
-
-```yaml {3-4}
-record:
-  enabled: True
-  export:
-    timelapse_args: "-vf setpts=PTS/60 -r 25"
+```
+POST /export/custom/{camera_name}/start/{start_time}/end/{end_time}
 ```
 
-:::tip
+The request body accepts `ffmpeg_input_args` and `ffmpeg_output_args` to control encoding, frame rate, filters, and other FFmpeg options. If neither is provided, Frigate defaults to time-lapse output settings (25x speed, 30 FPS).
 
-When using `hwaccel_args`, hardware encoding is used for timelapse generation. This setting can be overridden for a specific camera (e.g., when camera resolution exceeds hardware encoder limits); set the camera-level export hwaccel_args with the appropriate settings. Using an unrecognized value or empty string will fall back to software encoding (libx264).
+The following example exports a time-lapse at 60x speed with 25 FPS:
+
+```json
+{
+  "name": "Front Door Time-lapse",
+  "ffmpeg_output_args": "-vf setpts=PTS/60 -r 25"
+}
+```
+
+#### CPU fallback
+
+If hardware acceleration is configured and the export fails (e.g., the GPU is unavailable), set `cpu_fallback: true` in the request body to automatically retry using software encoding.
+
+```json
+{
+  "name": "My Export",
+  "ffmpeg_output_args": "-c:v libx264 -crf 23",
+  "cpu_fallback": true
+}
+```
+
+:::note
+
+Non-admin users are restricted from using FFmpeg arguments that can access the filesystem (e.g., `-filter_complex`, file paths, and protocol references). Admin users have full control over FFmpeg arguments.
 
 :::
 
 :::tip
 
-The encoder determines its own behavior so the resulting file size may be undesirably large.
-To reduce the output file size the ffmpeg parameter `-qp n` can be utilized (where `n` stands for the value of the quantisation parameter). The value can be adjusted to get an acceptable tradeoff between quality and file size for the given scenario.
+When `hwaccel_args` is configured, hardware encoding is used for exports. This can be overridden per camera (e.g., when camera resolution exceeds hardware encoder limits) by setting a camera-level `hwaccel_args`. Using an unrecognized value or empty string falls back to software encoding (libx264).
+
+:::
+
+:::tip
+
+To reduce output file size, add the FFmpeg parameter `-qp n` to `ffmpeg_output_args` (where `n` is the quantization parameter). Adjust the value to balance quality and file size for your scenario.
 
 :::
 
@@ -328,3 +351,63 @@ Setting `verbose: true` writes a detailed report of every orphaned file and data
 This operation uses considerable CPU resources and includes a safety threshold that aborts if more than 50% of files would be deleted. Only run when necessary. If you set `force: true` the safety threshold will be bypassed; do not use `force` unless you are certain the deletions are intended.
 
 :::
+
+## Understanding storage usage
+
+The storage usage Frigate reports will not exactly match what the operating system reports with `df` or `du`. This is expected, not a bug. The sections below explain how Frigate derives its storage figures and why they differ from the disk's own accounting.
+
+### How Frigate measures recording usage
+
+The **Recordings** value on the Storage Metrics page (<NavPath path="System > Storage" />), and the per-camera **Camera Storage** breakdown, is the sum of the recording segment sizes Frigate has written, taken from Frigate's database. It is **not** computed by a scan of the disk. Frigate tracks usage this way by design: repeatedly walking the entire drive to total its size would keep hard drives spun up and add unnecessary I/O.
+
+The disk **total** shown beside it, and the free-space figure Frigate uses to decide when to delete recordings, instead come from the operating system's report for the whole filesystem mounted at `/media/frigate`. As a result, the **Unused** value on the page is _total disk capacity minus Frigate's recordings_, not the drive's real free space, which will be lower whenever anything else is stored on the disk.
+
+### What counts toward usage, and why it won't match `df`
+
+Only **recording segments** (`/media/frigate/recordings`) are included in the recordings storage total. Plenty of other things consume real disk space but are **not** part of that number:
+
+- **Snapshots and thumbnails** (`/media/frigate/clips`): see [Snapshots](/configuration/snapshots). These are retained independently of recordings.
+- **Preview videos** and **review thumbnails** (also under `/media/frigate/clips`).
+- **Exports** (`/media/frigate/exports`): exports are never removed by retention.
+- **The database, downloaded detection models, and face / license plate training images** (stored under `/config`).
+- **Debug images from enrichments** (`/media/frigate/clips`): when enabled, License Plate Recognition's `debug_save_plates` and GenAI's `debug_save_thumbnails` save plate crops and request images for troubleshooting.
+
+These files are the usual explanation for an "other" or seemingly unaccounted bucket of space: it is real, it is Frigate's, and it simply isn't part of the _recordings_ total. They are also why comparing the **Recordings** figure to `df -h` always shows a gap: `df` additionally counts any non-Frigate data on the disk, filesystem overhead and reserved blocks (ext4 reserves ~5% for root by default, so a disk can read "full" before recordings approach the total), and recently deleted recordings whose space has not yet been reclaimed.
+
+:::tip
+
+The Storage page is not intended to be a system-wide disk monitor: it shows how much space _Frigate's recordings_ use. To see true disk usage, use `df -h` (free space) and `du -sh` (per-directory usage) on the host.
+
+:::
+
+### Free space and the `/media/frigate` mount
+
+Frigate reports the capacity and free space of whatever filesystem is actually mounted at `/media/frigate` **inside the container**. If an external drive or network share isn't truly mounted there (a missing `/etc/fstab` entry, a share that was offline when the container started, or a host that doesn't pass the path through), the container falls back to the host's OS disk, and Frigate will correctly report that smaller disk instead of the drive you intended.
+
+If the reported capacity doesn't match your drive, the mount is the place to look, not Frigate. Verify what is actually mounted from inside the container:
+
+```bash
+docker exec -it frigate df -h /media/frigate
+docker exec -it frigate mount | grep media
+```
+
+See the [storage mount layout](/frigate/installation#storage) for how the volumes are expected to be configured.
+
+### The `/tmp/cache` area is separate
+
+Recording segments are first written to `/tmp/cache`, a small, in-memory (`tmpfs`) area, before being checked and moved to `/media/frigate/recordings`. Because it is separate and small, `/tmp/cache` can fill up and produce `No space left on device` errors even when the recordings disk has plenty of room. They are different storage areas. See [Recordings troubleshooting](/troubleshooting/recordings) for diagnosing cache and slow-storage issues.
+
+### When the metrics don't match what's on disk
+
+Because usage is tracked in the database, deleting recording files directly on disk, or files left behind after an upgrade, will not update the reported usage, and can even push it above 100%. Frigate is unaware of files it didn't record and won't count or remove them automatically. Use [Syncing Media Files With Disk](#syncing-media-files-with-disk) to reconcile the database with what is actually on disk.
+
+## Will Frigate delete old recordings if my storage runs out?
+
+Yes. Frigate continuously checks the **free space of the disk** holding `/media/frigate/recordings`. This is different from adding up the size of every recording: free space is a single number the operating system already tracks, so Frigate can ask for it instantly without reading through your files or spinning up the disk, which is exactly why it relies on this check rather than scanning the drive. When less than roughly one hour of recording space remains (estimated from the current recording bitrate, **not** a fixed percentage), Frigate deletes the oldest recordings to reclaim space and logs a message. This emergency cleanup removes the oldest recordings first **regardless of retention settings**.
+
+Two consequences follow from this being based on whole-disk free space:
+
+- Because the check uses the disk's real free space, **anything** filling the drive, including non-Frigate files, can trigger deletion of your oldest recordings.
+- Cleanup can run while a meaningful percentage of the disk is still free (for example, with high bitrates or many cameras), because the threshold is "less than ~1 hour of recording headroom," not "X% full."
+
+Frequent emergency cleanups usually mean your configured retention exceeds what the disk can hold. Reduce your retention days so the normal retention cleanup keeps up and the emergency path rarely triggers.

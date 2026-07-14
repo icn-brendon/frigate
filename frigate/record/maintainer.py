@@ -11,7 +11,7 @@ import time
 from collections import defaultdict
 from multiprocessing.synchronize import Event as MpEvent
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import psutil
@@ -41,6 +41,8 @@ from frigate.review.types import SeverityEnum
 from frigate.util.services import get_video_properties
 
 logger = logging.getLogger(__name__)
+
+STALE_RECORDINGS_INFO_TTL = MAX_SEGMENTS_IN_CACHE * MAX_SEGMENT_DURATION * 2
 
 
 class SegmentInfo:
@@ -98,7 +100,7 @@ class RecordingMaintainer(threading.Thread):
         self.stop_event = stop_event
         self.object_recordings_info: dict[str, list] = defaultdict(list)
         self.audio_recordings_info: dict[str, list] = defaultdict(list)
-        self.end_time_cache: dict[str, Tuple[datetime.datetime, float]] = {}
+        self.end_time_cache: dict[str, tuple[datetime.datetime, float]] = {}
         self.unexpected_cache_files_logged: bool = False
 
     async def move_files(self) -> None:
@@ -140,7 +142,7 @@ class RecordingMaintainer(threading.Thread):
             try:
                 start_time = datetime.datetime.strptime(
                     date, CACHE_SEGMENT_FORMAT
-                ).astimezone(datetime.timezone.utc)
+                ).astimezone(datetime.UTC)
             except ValueError:
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
@@ -221,7 +223,7 @@ class RecordingMaintainer(threading.Thread):
             try:
                 start_time = datetime.datetime.strptime(
                     date, CACHE_SEGMENT_FORMAT
-                ).astimezone(datetime.timezone.utc)
+                ).astimezone(datetime.UTC)
             except ValueError:
                 if not self.unexpected_cache_files_logged:
                     logger.warning("Skipping unexpected files in cache")
@@ -343,9 +345,9 @@ class RecordingMaintainer(threading.Thread):
                 RecordingsDataTypeEnum.saved.value,
             )
 
-        recordings_to_insert: list[Optional[dict[str, Any]]] = await asyncio.gather(
-            *tasks
-        )
+        self._expire_stale_recordings_info(grouped_recordings)
+
+        recordings_to_insert: list[dict[str, Any] | None] = await asyncio.gather(*tasks)
 
         # fire and forget recordings entries
         self.requestor.send_data(
@@ -353,13 +355,28 @@ class RecordingMaintainer(threading.Thread):
             [r for r in recordings_to_insert if r is not None],
         )
 
+    def _expire_stale_recordings_info(
+        self, grouped_recordings: defaultdict[str, list[dict[str, Any]]]
+    ) -> None:
+        expire_before = datetime.datetime.now().timestamp() - STALE_RECORDINGS_INFO_TTL
+        for recordings_info in (
+            self.object_recordings_info,
+            self.audio_recordings_info,
+        ):
+            for camera in list(recordings_info.keys()):
+                if camera in grouped_recordings:
+                    continue
+                info = recordings_info[camera]
+                while info and info[0][0] < expire_before:
+                    info.pop(0)
+
     def drop_segment(self, cache_path: str) -> None:
         Path(cache_path).unlink(missing_ok=True)
         self.end_time_cache.pop(cache_path, None)
 
     async def validate_and_move_segment(
         self, camera: str, reviews: Any, recording: dict[str, Any]
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         cache_path: str = recording["cache_path"]
         start_time: datetime.datetime = recording["start_time"]
         stream_quality: str = recording.get("stream_quality", "sub")
@@ -415,6 +432,7 @@ class RecordingMaintainer(threading.Thread):
             )
 
         record_config = self.config.cameras[camera].record
+        segment_stats: SegmentInfo | None = None
 
         # Main stream event segments honor the configured event_recording
         # retain mode (defaulting to "all" if unset). Previously this was
@@ -422,12 +440,24 @@ class RecordingMaintainer(threading.Thread):
         if stream_quality == "main":
             event_retain = record_config.event_recording.retain
             main_retain_mode = (
-                event_retain.mode if event_retain and event_retain.mode is not None
+                event_retain.mode
+                if event_retain and event_retain.mode is not None
                 else RetainModeEnum.all
             )
+            segment_stats = self.segment_stats(camera, start_time, end_time)
+
+            if segment_stats.should_discard_segment(main_retain_mode):
+                self.drop_segment(cache_path)
+                return None
+
             return await self.move_segment(
-                camera, start_time, end_time, duration, cache_path,
-                main_retain_mode, stream_quality,
+                camera,
+                start_time,
+                end_time,
+                duration,
+                cache_path,
+                segment_stats,
+                stream_quality,
             )
 
         highest = None
@@ -451,7 +481,7 @@ class RecordingMaintainer(threading.Thread):
             if (
                 datetime.datetime.fromtimestamp(
                     most_recently_processed_frame_time
-                ).astimezone(datetime.timezone.utc)
+                ).astimezone(datetime.UTC)
                 >= end_time
             ):
                 record_mode = (
@@ -459,9 +489,20 @@ class RecordingMaintainer(threading.Thread):
                     if highest == "continuous"
                     else RetainModeEnum.motion
                 )
-                return await self.move_segment(
-                    camera, start_time, end_time, duration, cache_path, record_mode, stream_quality
-                )
+                segment_stats = self.segment_stats(camera, start_time, end_time)
+
+                # Here we only check if we should move the segment based on non-object recording retention
+                # we will always want to check for overlapping review items below before dropping the segment
+                if not segment_stats.should_discard_segment(record_mode):
+                    return await self.move_segment(
+                        camera,
+                        start_time,
+                        end_time,
+                        duration,
+                        cache_path,
+                        segment_stats,
+                        stream_quality,
+                    )
 
         # we fell through the continuous / motion check, so we need to check the review items
         # if the cached segment overlaps with the review items:
@@ -493,27 +534,39 @@ class RecordingMaintainer(threading.Thread):
                 if review.severity == "alert"
                 else record_config.detections.retain.mode
             )
-            # move from cache to recordings immediately
-            return await self.move_segment(
-                camera,
-                start_time,
-                end_time,
-                duration,
-                cache_path,
-                record_mode,
-                stream_quality,
-            )
-        # if it doesn't overlap with an review item, go ahead and drop the segment
-        # if it ends more than the configured pre_capture for the camera
-        # BUT only if continuous/motion is NOT enabled (otherwise wait for processing)
-        elif highest is None:
+
+            if segment_stats is None:
+                segment_stats = self.segment_stats(camera, start_time, end_time)
+
+            if not segment_stats.should_discard_segment(record_mode):
+                # move from cache to recordings immediately
+                return await self.move_segment(
+                    camera,
+                    start_time,
+                    end_time,
+                    duration,
+                    cache_path,
+                    segment_stats,
+                    stream_quality,
+                )
+            else:
+                self.drop_segment(cache_path)
+                return None
+
+        # if it doesn't overlap with a review item, drop the segment once it
+        # ends more than event_pre_capture before the most recently processed
+        # frame. at this point we've already decided not to keep it for
+        # continuous/motion retention (either disabled or segment_stats said
+        # discard), so waiting longer just fills the cache.
+        else:
             camera_info = self.object_recordings_info[camera]
             most_recently_processed_frame_time = (
                 camera_info[-1][0] if len(camera_info) > 0 else 0
             )
             retain_cutoff = datetime.datetime.fromtimestamp(
                 most_recently_processed_frame_time - record_config.event_pre_capture
-            ).astimezone(datetime.timezone.utc)
+            ).astimezone(datetime.UTC)
+
             if end_time < retain_cutoff:
                 self.drop_segment(cache_path)
 
@@ -637,16 +690,9 @@ class RecordingMaintainer(threading.Thread):
         end_time: datetime.datetime,
         duration: float,
         cache_path: str,
-        store_mode: RetainModeEnum,
+        segment_info: SegmentInfo,
         stream_quality: str = "sub",
-    ) -> Optional[dict[str, Any]]:
-        segment_info = self.segment_stats(camera, start_time, end_time)
-
-        # check if the segment shouldn't be stored
-        if segment_info.should_discard_segment(store_mode):
-            self.drop_segment(cache_path)
-            return None
-
+    ) -> dict[str, Any] | None:
         # directory will be in utc due to start_time being in utc
         directory = os.path.join(
             RECORD_DIR,
@@ -654,8 +700,7 @@ class RecordingMaintainer(threading.Thread):
             camera,
         )
 
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+        os.makedirs(directory, exist_ok=True)
 
         # file will be in utc due to start_time being in utc
         quality_suffix = f"_{stream_quality}" if stream_quality != "sub" else ""
@@ -677,6 +722,8 @@ class RecordingMaintainer(threading.Thread):
                     "copy",
                     "-movflags",
                     "+faststart",
+                    "-metadata",
+                    f"creation_time={start_time.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}",
                     file_path,
                     stderr=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.DEVNULL,

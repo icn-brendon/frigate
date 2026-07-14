@@ -40,6 +40,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Command,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "../ui/command";
+import { IconRenderer } from "../icons/IconPicker";
+import * as LuIcons from "react-icons/lu";
 import { isDesktop, isMobile } from "react-device-detect";
 import { Drawer, DrawerContent, DrawerTrigger } from "../ui/drawer";
 import SaveExportOverlay from "./SaveExportOverlay";
@@ -55,6 +65,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
 import { useNavigate } from "react-router-dom";
 import { useIsAdmin } from "@/hooks/use-is-admin";
+import { isReplayCamera } from "@/utils/cameraUtil";
 
 const EXPORT_OPTIONS = [
   "1",
@@ -125,7 +136,7 @@ export default function ExportDialog({
     }
 
     if (!range) {
-      toast.error(t("export.toast.error.noVaildTimeSelected"), {
+      toast.error(t("export.toast.error.noValidTimeSelected"), {
         position: "top-center",
       });
       return false;
@@ -166,7 +177,11 @@ export default function ExportDialog({
       toast.success(t("export.toast.queued"), {
         position: "top-center",
         action: (
-          <a href="/export" target="_blank" rel="noopener noreferrer">
+          <a
+            href={`${baseUrl}export`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             <Button>{t("export.toast.view")}</Button>
           </a>
         ),
@@ -288,7 +303,7 @@ export default function ExportDialog({
         <Content
           className={
             isDesktop
-              ? "sm:rounded-lg md:rounded-2xl"
+              ? "scrollbar-container max-h-[90dvh] overflow-y-auto sm:rounded-lg md:rounded-2xl"
               : "mx-4 rounded-lg px-4 pb-4 md:rounded-2xl"
           }
         >
@@ -383,6 +398,9 @@ export function ExportContent({
   const [newCaseName, setNewCaseName] = useState("");
   const [newCaseDescription, setNewCaseDescription] = useState("");
   const [isStartingBatchExport, setIsStartingBatchExport] = useState(false);
+  const [cameraSearch, setCameraSearch] = useState("");
+  const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
+  const cameraMenuRef = useRef<HTMLDivElement>(null);
   const multiRangeKey = useMemo(() => {
     if (activeTab !== "multi" || !range) {
       return undefined;
@@ -456,7 +474,9 @@ export function ExportContent({
   );
 
   const cameraActivities = useMemo<CameraActivity[]>(() => {
-    const allCameraIds = Object.keys(config?.cameras ?? {});
+    const allCameraIds = Object.keys(config?.cameras ?? {}).filter(
+      (name) => !isReplayCamera(name),
+    );
     const byCamera = new Map<string, Event[]>();
 
     events?.forEach((event) => {
@@ -582,13 +602,82 @@ export function ExportContent({
     );
   }, []);
 
+  const availableCameraIds = useMemo(
+    () => cameraActivities.map((activity) => activity.camera),
+    [cameraActivities],
+  );
+
+  const activeCameraIds = useMemo(
+    () =>
+      cameraActivities
+        .filter((activity) => activity.hasDetections)
+        .map((activity) => activity.camera),
+    [cameraActivities],
+  );
+
+  const cameraGroups = useMemo(
+    () =>
+      Object.entries(config?.camera_groups ?? {})
+        .map(([name, group]) => ({
+          name,
+          icon: group.icon,
+          order: group.order,
+          cameras: group.cameras.filter((cameraId) =>
+            availableCameraIds.includes(cameraId),
+          ),
+        }))
+        .filter((group) => group.cameras.length > 0)
+        .sort((a, b) => a.order - b.order),
+    [config?.camera_groups, availableCameraIds],
+  );
+
+  // Filter the rendered camera cards by the search query
+  const filteredCameraActivities = useMemo(() => {
+    const query = cameraSearch.trim().toLowerCase();
+    if (!query) {
+      return cameraActivities;
+    }
+    return cameraActivities.filter((activity) => {
+      const friendlyName = resolveCameraName(config, activity.camera);
+      return (
+        activity.camera.toLowerCase().includes(query) ||
+        friendlyName.toLowerCase().includes(query)
+      );
+    });
+  }, [cameraActivities, cameraSearch, config]);
+
+  // Group/all/activity selection replaces the current selection
+  const applyCameraSelection = useCallback((cameraIds: string[]) => {
+    setHasManualCameraSelection(true);
+    setSelectedCameraIds(cameraIds);
+    setCameraMenuOpen(false);
+  }, []);
+
+  // Close the dropdown when focus leaves the camera selection control entirely
+  const handleCameraInputBlur = useCallback((event: React.FocusEvent) => {
+    if (
+      cameraMenuRef.current &&
+      !cameraMenuRef.current.contains(event.relatedTarget as Node)
+    ) {
+      setCameraMenuOpen(false);
+    }
+  }, []);
+
+  // Reset the search and dropdown when leaving the multi-camera tab
+  useEffect(() => {
+    if (activeTab !== "multi") {
+      setCameraSearch("");
+      setCameraMenuOpen(false);
+    }
+  }, [activeTab]);
+
   const startBatchExport = useCallback(async () => {
     if (isStartingBatchExport) {
       return;
     }
 
     if (!range) {
-      toast.error(t("export.toast.error.noVaildTimeSelected"), {
+      toast.error(t("export.toast.error.noValidTimeSelected"), {
         position: "top-center",
       });
       return;
@@ -834,7 +923,6 @@ export function ExportContent({
           )}
 
           <Input
-            className="text-md"
             type="search"
             placeholder={t("export.name.placeholder")}
             value={name}
@@ -845,7 +933,7 @@ export function ExportContent({
 
           {isAdmin && (
             <div className="space-y-2">
-              <Label className="text-sm text-secondary-foreground">
+              <Label className="text-sm text-primary">
                 {t("export.case.label")}
               </Label>
               <Select
@@ -877,13 +965,11 @@ export function ExportContent({
               {selectedCaseId === "new" && (
                 <div className="space-y-2 pt-1">
                   <Input
-                    className="text-md"
                     placeholder={t("export.case.newCaseNamePlaceholder")}
                     value={singleNewCaseName}
                     onChange={(e) => setSingleNewCaseName(e.target.value)}
                   />
                   <Textarea
-                    className="text-md"
                     placeholder={t("export.case.newCaseDescriptionPlaceholder")}
                     value={singleNewCaseDescription}
                     onChange={(e) =>
@@ -904,7 +990,7 @@ export function ExportContent({
           )}
         >
           <div className="space-y-2">
-            <Label className="text-sm text-secondary-foreground">
+            <Label className="text-sm text-primary">
               {t("export.multiCamera.timeRange")}
             </Label>
             <div className="flex items-center gap-2">
@@ -947,16 +1033,109 @@ export function ExportContent({
           </div>
 
           <div className="space-y-2">
-            <Label className="text-sm text-secondary-foreground">
-              {t("export.multiCamera.cameraSelection")}
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-sm text-primary">
+                {t("export.multiCamera.cameraSelection")}
+              </Label>
+              {availableCameraIds.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {t("export.multiCamera.selectedCount", {
+                    selected: selectedCameraCount,
+                    total: availableCameraIds.length,
+                  })}
+                </span>
+              )}
+            </div>
             <div className="text-xs text-muted-foreground">
               {t("export.multiCamera.cameraSelectionHelp")}
             </div>
+            {!isEventsLoading && availableCameraIds.length > 0 && (
+              <div className="relative" ref={cameraMenuRef}>
+                <Command
+                  shouldFilter={false}
+                  className="overflow-visible rounded-md border bg-secondary/40"
+                >
+                  <CommandInput
+                    value={cameraSearch}
+                    onValueChange={setCameraSearch}
+                    onFocus={() => setCameraMenuOpen(true)}
+                    onBlur={handleCameraInputBlur}
+                    placeholder={t("export.multiCamera.searchOrSelectGroup")}
+                  />
+                  {/* Hide the actions/groups menu while a search query is
+                      active so it doesn't cover the filtered camera cards. */}
+                  {cameraMenuOpen && cameraSearch.trim().length === 0 && (
+                    <CommandList className="absolute top-full z-10 mt-1 max-h-72 w-full rounded-md border bg-background shadow-md">
+                      <CommandGroup>
+                        <CommandItem
+                          value="action:select-all"
+                          className="cursor-pointer"
+                          onSelect={() =>
+                            applyCameraSelection(availableCameraIds)
+                          }
+                        >
+                          <span>{t("export.multiCamera.selectAll")}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">
+                            {availableCameraIds.length}
+                          </span>
+                        </CommandItem>
+                        <CommandItem
+                          value="action:clear"
+                          className="cursor-pointer"
+                          onSelect={() => applyCameraSelection([])}
+                        >
+                          {t("export.multiCamera.clearSelection")}
+                        </CommandItem>
+                        <CommandItem
+                          value="action:activity"
+                          className="cursor-pointer"
+                          onSelect={() => applyCameraSelection(activeCameraIds)}
+                        >
+                          <span>
+                            {t("export.multiCamera.selectWithActivity")}
+                          </span>
+                          <span className="ml-auto text-xs text-muted-foreground">
+                            {activeCameraIds.length}
+                          </span>
+                        </CommandItem>
+                      </CommandGroup>
+                      {cameraGroups.length > 0 && (
+                        <>
+                          <CommandSeparator />
+                          <CommandGroup
+                            heading={t("export.multiCamera.selectGroup")}
+                          >
+                            {cameraGroups.map((group) => (
+                              <CommandItem
+                                key={group.name}
+                                value={`group:${group.name}`}
+                                className="cursor-pointer"
+                                onSelect={() =>
+                                  applyCameraSelection(group.cameras)
+                                }
+                              >
+                                <IconRenderer
+                                  icon={LuIcons[group.icon]}
+                                  className="mr-2 size-4 text-secondary-foreground"
+                                />
+                                <span className="truncate">{group.name}</span>
+                                <span className="ml-auto text-xs text-muted-foreground">
+                                  {group.cameras.length}
+                                </span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </>
+                      )}
+                    </CommandList>
+                  )}
+                </Command>
+              </div>
+            )}
             <div
               className={cn(
                 "scrollbar-container space-y-2",
-                isDesktop && "max-h-64 overflow-y-auto pr-1",
+                isDesktop && "max-h-64 overflow-y-auto p-0.5 pr-1",
               )}
             >
               {isEventsLoading && (
@@ -969,7 +1148,14 @@ export function ExportContent({
                   {t("export.multiCamera.noCameras")}
                 </div>
               )}
-              {cameraActivities.map((activity) => {
+              {!isEventsLoading &&
+                cameraActivities.length > 0 &&
+                filteredCameraActivities.length === 0 && (
+                  <div className="px-2 py-4 text-sm text-muted-foreground">
+                    {t("export.multiCamera.noMatchingCameras")}
+                  </div>
+                )}
+              {filteredCameraActivities.map((activity) => {
                 const isSelected = selectedCameraIds.includes(activity.camera);
 
                 return (
@@ -1026,11 +1212,10 @@ export function ExportContent({
           </div>
 
           <div className="space-y-2">
-            <Label className="text-sm text-secondary-foreground">
+            <Label className="text-sm text-primary">
               {t("export.multiCamera.nameLabel")}
             </Label>
             <Input
-              className="text-md"
               type="search"
               placeholder={t("export.multiCamera.namePlaceholder")}
               value={name}
@@ -1042,7 +1227,7 @@ export function ExportContent({
 
           {isAdmin && (
             <div className="space-y-2">
-              <Label className="text-sm text-secondary-foreground">
+              <Label className="text-sm text-primary">
                 {t("export.case.label")}
               </Label>
               <Select
@@ -1072,13 +1257,11 @@ export function ExportContent({
               {batchCaseSelection === "new" && (
                 <div className="space-y-2 pt-1">
                   <Input
-                    className="text-md"
                     placeholder={t("export.case.newCaseNamePlaceholder")}
                     value={newCaseName}
                     onChange={(event) => setNewCaseName(event.target.value)}
                   />
                   <Textarea
-                    className="text-md"
                     placeholder={t("export.case.newCaseDescriptionPlaceholder")}
                     value={newCaseDescription}
                     onChange={(event) =>
@@ -1093,21 +1276,17 @@ export function ExportContent({
       </Tabs>
 
       {isDesktop && <SelectSeparator className="my-4 bg-secondary" />}
-      <DialogFooter
-        className={isDesktop ? "" : "mt-3 flex flex-col-reverse gap-4"}
-      >
-        <div
-          className={`cursor-pointer p-2 text-center ${isDesktop ? "" : "w-full"}`}
+      <DialogFooter className="mt-3 sm:mt-0">
+        <Button
+          aria-label={t("button.cancel", { ns: "common" })}
           onClick={onCancel}
         >
           {t("button.cancel", { ns: "common" })}
-        </div>
+        </Button>
         {activeTab === "export" ? (
           <Button
-            className={isDesktop ? "" : "w-full"}
             aria-label={t("export.selectOrExport")}
             variant="select"
-            size="sm"
             disabled={isStartingExport}
             onClick={async () => {
               if (selectedOption == "timeline") {
@@ -1129,12 +1308,10 @@ export function ExportContent({
           </Button>
         ) : (
           <Button
-            className={isDesktop ? "" : "w-full"}
             aria-label={t("export.multiCamera.exportButton", {
               count: selectedCameraCount,
             })}
             variant="select"
-            size="sm"
             disabled={!canStartBatchExport}
             onClick={() => void startBatchExport()}
           >

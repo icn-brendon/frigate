@@ -3,7 +3,7 @@
 import logging
 import os
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from frigate.const import (
     FFMPEG_HVC1_ARGS,
@@ -215,7 +215,7 @@ def parse_preset_hardware_acceleration_decode(
     width: int,
     height: int,
     gpu: int,
-) -> Optional[list[str]]:
+) -> list[str] | None:
     """Return the correct preset if in preset format otherwise return None."""
     if not isinstance(arg, str):
         return None
@@ -420,7 +420,7 @@ PRESETS_INPUT = {
 }
 
 
-def parse_preset_input(arg: Any, detect_fps: int) -> Optional[list[str]]:
+def parse_preset_input(arg: Any, detect_fps: int) -> list[str] | None:
     """Return the correct preset if in preset format otherwise return None."""
     if not isinstance(arg, str):
         return None
@@ -465,16 +465,6 @@ PRESETS_RECORD_OUTPUT = {
         "-c:a",
         "aac",
     ],
-    # NOTE: This preset originally used "-c:a copy" to pass through audio
-    # without re-encoding. FFmpeg 7.x introduced a threaded pipeline where
-    # demuxing, encoding, and muxing run in parallel via a Scheduler. This
-    # broke audio streamcopy from RTSP sources: packets are demuxed correctly
-    # but silently dropped before reaching the muxer (0 bytes written). The
-    # issue is specific to RTSP + streamcopy; file inputs and transcoding both
-    # work. Transcoding AAC audio is very lightweight (~30KiB per 10s segment)
-    # and adds negligible CPU overhead, so this is an acceptable workaround.
-    # The benefits of FFmpeg 7.x — particularly the removal of gamma correction
-    # hacks required by earlier versions — outweigh this trade-off.
     "preset-record-generic-audio-copy": [
         "-f",
         "segment",
@@ -486,10 +476,8 @@ PRESETS_RECORD_OUTPUT = {
         "1",
         "-strftime",
         "1",
-        "-c:v",
+        "-c",
         "copy",
-        "-c:a",
-        "aac",
     ],
     "preset-record-mjpeg": [
         "-f",
@@ -542,9 +530,7 @@ PRESETS_RECORD_OUTPUT = {
 }
 
 
-def parse_preset_output_record(
-    arg: Any, force_record_hvc1: bool
-) -> Optional[list[str]]:
+def parse_preset_output_record(arg: Any, force_record_hvc1: bool) -> list[str] | None:
     """Return the correct preset if in preset format otherwise return None."""
     if not isinstance(arg, str):
         return None
