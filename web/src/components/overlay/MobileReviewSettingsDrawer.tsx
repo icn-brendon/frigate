@@ -26,7 +26,7 @@ import SaveExportOverlay from "./SaveExportOverlay";
 import { isMobile } from "react-device-detect";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { StartExportResponse } from "@/types/export";
+import { ExportQuality, StartExportResponse } from "@/types/export";
 
 type DrawerMode =
   | "none"
@@ -117,6 +117,7 @@ export default function MobileReviewSettingsDrawer({
   );
   const [singleNewCaseName, setSingleNewCaseName] = useState("");
   const [singleNewCaseDescription, setSingleNewCaseDescription] = useState("");
+  const [quality, setQuality] = useState<ExportQuality>("auto");
   const [isStartingExport, setIsStartingExport] = useState(false);
   const onStartExport = useCallback(async () => {
     if (isStartingExport) {
@@ -168,6 +169,7 @@ export default function MobileReviewSettingsDrawer({
           source: "recordings",
           name,
           export_case_id: exportCaseId,
+          quality,
         },
       );
 
@@ -185,6 +187,7 @@ export default function MobileReviewSettingsDrawer({
       setSelectedCaseId(undefined);
       setSingleNewCaseName("");
       setSingleNewCaseDescription("");
+      setQuality("auto");
       setRange(undefined);
       setMode("none");
       return true;
@@ -213,6 +216,7 @@ export default function MobileReviewSettingsDrawer({
     camera,
     isStartingExport,
     name,
+    quality,
     range,
     selectedCaseId,
     singleNewCaseDescription,
@@ -381,6 +385,7 @@ export default function MobileReviewSettingsDrawer({
         selectedCaseId={selectedCaseId}
         singleNewCaseName={singleNewCaseName}
         singleNewCaseDescription={singleNewCaseDescription}
+        quality={quality}
         activeTab={exportTab}
         isStartingExport={isStartingExport}
         onStartExport={onStartExport}
@@ -389,6 +394,7 @@ export default function MobileReviewSettingsDrawer({
         setSelectedCaseId={setSelectedCaseId}
         setSingleNewCaseName={setSingleNewCaseName}
         setSingleNewCaseDescription={setSingleNewCaseDescription}
+        setQuality={setQuality}
         setRange={setRange}
         setMode={(mode) => {
           setMode(mode);
@@ -403,6 +409,7 @@ export default function MobileReviewSettingsDrawer({
           setSelectedCaseId(undefined);
           setSingleNewCaseName("");
           setSingleNewCaseDescription("");
+          setQuality("auto");
           setExportTab("export");
           setDrawerMode("select");
         }}

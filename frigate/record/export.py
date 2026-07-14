@@ -99,6 +99,36 @@ class PlaybackSourceEnum(str, Enum):
     preview = "preview"
 
 
+class ExportQualityEnum(str, Enum):
+    """Which recording stream quality an export should use.
+
+    auto: prefer the HD (main) event stream when any main-quality footage
+    overlaps the requested range, otherwise fall back to the continuous
+    sub stream. main/sub force that quality explicitly.
+    """
+
+    auto = "auto"
+    main = "main"
+    sub = "sub"
+
+
+def recordings_quality_filter(quality: str):
+    """Peewee predicate matching vod_ts stream-quality semantics (api/media.py).
+
+    main: the stream_quality column is authoritative, with the _main.mp4 path
+    suffix as a fallback for legacy/mislabelled rows.
+    sub: sub or untagged rows, excluding anything that looks like main.
+    """
+    if quality == ExportQualityEnum.main.value:
+        return (Recordings.stream_quality == "main") | Recordings.path.endswith(
+            "_main.mp4"
+        )
+
+    return (
+        (Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null())
+    ) & ~Recordings.path.endswith("_main.mp4")
+
+
 class RecordingExporter(threading.Thread):
     """Exports a specific set of recordings for a camera to storage as a single file."""
 
@@ -116,6 +146,7 @@ class RecordingExporter(threading.Thread):
         ffmpeg_input_args: Optional[str] = None,
         ffmpeg_output_args: Optional[str] = None,
         cpu_fallback: bool = False,
+        quality: str = ExportQualityEnum.auto.value,
     ) -> None:
         super().__init__()
         self.config = config
@@ -130,6 +161,12 @@ class RecordingExporter(threading.Thread):
         self.ffmpeg_input_args = ffmpeg_input_args
         self.ffmpeg_output_args = ffmpeg_output_args
         self.cpu_fallback = cpu_fallback
+        self.quality = (
+            quality.value if isinstance(quality, ExportQualityEnum) else quality
+        )
+        # resolved lazily so both the initial export command and any
+        # cpu-fallback retry use the same quality decision
+        self.resolved_quality: Optional[str] = None
 
         # ensure export thumb dir
         Path(os.path.join(CLIPS_DIR, "export")).mkdir(exist_ok=True)
@@ -234,6 +271,48 @@ class RecordingExporter(threading.Thread):
 
         return thumb_path
 
+    def resolve_stream_quality(self) -> str:
+        """Resolve the effective stream quality for this export.
+
+        auto prefers the HD (main) event stream when any main-quality
+        recording overlaps [start_time, end_time] for this camera,
+        otherwise falls back to the continuous sub stream. Explicit
+        main/sub pass through unchanged. The result is cached so retries
+        (cpu fallback) reuse the same decision.
+        """
+        if self.resolved_quality is not None:
+            return self.resolved_quality
+
+        quality = self.quality
+
+        if quality == ExportQualityEnum.auto.value:
+            has_main = (
+                Recordings.select(Recordings.id)
+                .where(
+                    Recordings.start_time.between(self.start_time, self.end_time)
+                    | Recordings.end_time.between(self.start_time, self.end_time)
+                    | (
+                        (self.start_time > Recordings.start_time)
+                        & (self.end_time < Recordings.end_time)
+                    )
+                )
+                .where(Recordings.camera == self.camera)
+                .where(recordings_quality_filter(ExportQualityEnum.main.value))
+                .exists()
+            )
+            quality = (
+                ExportQualityEnum.main.value
+                if has_main
+                else ExportQualityEnum.sub.value
+            )
+
+        self.resolved_quality = quality
+        logger.info(
+            f"Export {self.export_id} using {quality} quality recordings "
+            f"(requested: {self.quality})"
+        )
+        return quality
+
     def get_record_export_command(
         self, video_path: str, use_hwaccel: bool = True
     ) -> tuple[list[str], str | list[str]]:
@@ -242,14 +321,27 @@ class RecordingExporter(threading.Thread):
         if type(internal_port) is str:
             internal_port = int(internal_port.split(":")[-1])
 
+        quality = self.resolve_stream_quality()
+
+        # for main quality the vod URL must embed the quality in the path
+        # (not a query param) so nginx-vod-module upstream subrequests
+        # forward it — see vod_ts_with_quality in api/media.py. The sub URL
+        # keeps the legacy quality-less form for backward compatibility.
+        if quality == ExportQualityEnum.main.value:
+            vod_path_suffix = f"/quality/{quality}/index.m3u8"
+        else:
+            vod_path_suffix = "/index.m3u8"
+
         playlist_lines: list[str] = []
         if (self.end_time - self.start_time) <= MAX_PLAYLIST_SECONDS:
-            playlist_url = f"http://127.0.0.1:{internal_port}/vod/{self.camera}/start/{self.start_time}/end/{self.end_time}/index.m3u8"
+            playlist_url = f"http://127.0.0.1:{internal_port}/vod/{self.camera}/start/{self.start_time}/end/{self.end_time}{vod_path_suffix}"
             ffmpeg_input = (
                 f"-y -protocol_whitelist pipe,file,http,tcp -i {playlist_url}"
             )
         else:
-            # get full set of recordings
+            # get full set of recordings for the resolved quality; without
+            # the quality filter the chunk boundaries would mix main and
+            # sub rows and the vod subrequests would double-count footage
             export_recordings = (
                 Recordings.select(
                     Recordings.start_time,
@@ -264,6 +356,7 @@ class RecordingExporter(threading.Thread):
                     )
                 )
                 .where(Recordings.camera == self.camera)
+                .where(recordings_quality_filter(quality))
                 .order_by(Recordings.start_time.asc())
             )
 
@@ -274,7 +367,7 @@ class RecordingExporter(threading.Thread):
             for page in range(1, num_pages + 1):
                 playlist = export_recordings.paginate(page, page_size)
                 playlist_lines.append(
-                    f"file 'http://127.0.0.1:{internal_port}/vod/{self.camera}/start/{float(playlist[0].start_time)}/end/{float(playlist[-1].end_time)}/index.m3u8'"
+                    f"file 'http://127.0.0.1:{internal_port}/vod/{self.camera}/start/{float(playlist[0].start_time)}/end/{float(playlist[-1].end_time)}{vod_path_suffix}'"
                 )
 
             ffmpeg_input = "-y -protocol_whitelist pipe,file,http,tcp -f concat -safe 0 -i /dev/stdin"

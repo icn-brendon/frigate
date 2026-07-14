@@ -3,7 +3,7 @@ from typing import Optional, Union
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
-from frigate.record.export import PlaybackSourceEnum
+from frigate.record.export import ExportQualityEnum, PlaybackSourceEnum
 
 
 class ExportRecordingsBody(BaseModel):
@@ -18,6 +18,11 @@ class ExportRecordingsBody(BaseModel):
         max_length=30,
         description="ID of the export case to assign this export to",
     )
+    quality: ExportQualityEnum = Field(
+        default=ExportQualityEnum.auto,
+        title="Stream quality",
+        description="Recording stream quality to export: auto prefers HD (main) footage when it covers the range, falling back to sub.",
+    )
 
 
 class ExportRecordingsCustomBody(BaseModel):
@@ -31,6 +36,11 @@ class ExportRecordingsCustomBody(BaseModel):
         title="Export case ID",
         max_length=30,
         description="ID of the export case to assign this export to",
+    )
+    quality: ExportQualityEnum = Field(
+        default=ExportQualityEnum.auto,
+        title="Stream quality",
+        description="Recording stream quality to export: auto prefers HD (main) footage when it covers the range, falling back to sub.",
     )
     ffmpeg_input_args: Optional[str] = Field(
         default=None,

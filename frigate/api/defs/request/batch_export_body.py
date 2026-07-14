@@ -2,6 +2,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from frigate.record.export import ExportQualityEnum
+
 MAX_BATCH_EXPORT_ITEMS = 50
 
 
@@ -25,6 +27,11 @@ class BatchExportItem(BaseModel):
         title="Client item ID",
         max_length=128,
         description="Optional opaque client identifier echoed back in results",
+    )
+    quality: ExportQualityEnum = Field(
+        default=ExportQualityEnum.auto,
+        title="Stream quality",
+        description="Recording stream quality to export: auto prefers HD (main) footage when it covers the range, falling back to sub.",
     )
 
 

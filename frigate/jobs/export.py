@@ -14,7 +14,11 @@ from peewee import DoesNotExist
 from frigate.config import FrigateConfig
 from frigate.jobs.job import Job
 from frigate.models import Export
-from frigate.record.export import PlaybackSourceEnum, RecordingExporter
+from frigate.record.export import (
+    ExportQualityEnum,
+    PlaybackSourceEnum,
+    RecordingExporter,
+)
 from frigate.types import JobStatusTypesEnum
 
 logger = logging.getLogger(__name__)
@@ -43,6 +47,7 @@ class ExportJob(Job):
     ffmpeg_input_args: Optional[str] = None
     ffmpeg_output_args: Optional[str] = None
     cpu_fallback: bool = False
+    quality: str = ExportQualityEnum.auto.value
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API responses.
@@ -229,6 +234,7 @@ class ExportJobManager:
             job.ffmpeg_input_args,
             job.ffmpeg_output_args,
             job.cpu_fallback,
+            quality=job.quality,
         )
 
         try:

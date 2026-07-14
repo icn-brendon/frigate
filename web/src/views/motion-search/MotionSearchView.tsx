@@ -354,6 +354,7 @@ export default function MotionSearchView({
         `export/${selectedCamera}/start/${Math.round(exportRange.after)}/end/${Math.round(exportRange.before)}`,
         {
           playback: "realtime",
+          quality: "auto",
         },
       )
       .then((response) => {

@@ -66,6 +66,7 @@ from frigate.jobs.export import (
 from frigate.models import Export, ExportCase, Previews, Recordings
 from frigate.record.export import (
     DEFAULT_TIME_LAPSE_FFMPEG_ARGS,
+    ExportQualityEnum,
     PlaybackSourceEnum,
     validate_ffmpeg_args,
 )
@@ -252,6 +253,7 @@ def _build_export_job(
     ffmpeg_input_args: Optional[str] = None,
     ffmpeg_output_args: Optional[str] = None,
     cpu_fallback: bool = False,
+    quality: ExportQualityEnum = ExportQualityEnum.auto,
 ) -> ExportJob:
     return ExportJob(
         id=_generate_export_id(camera_name),
@@ -265,6 +267,7 @@ def _build_export_job(
         ffmpeg_input_args=ffmpeg_input_args,
         ffmpeg_output_args=ffmpeg_output_args,
         cpu_fallback=cpu_fallback,
+        quality=quality.value,
     )
 
 
@@ -593,6 +596,7 @@ def export_recordings_batch(
             sanitized_images[index],
             PlaybackSourceEnum.recordings,
             export_case_id,
+            quality=item.quality,
         )
         try:
             start_export_job(request.app.frigate_config, export_job)
@@ -707,6 +711,7 @@ def export_recording(
         existing_image,
         playback_source,
         export_case_id,
+        quality=body.quality,
     )
     try:
         start_export_job(request.app.frigate_config, export_job)
@@ -858,6 +863,7 @@ def export_recording_custom(
         ffmpeg_input_args,
         ffmpeg_output_args,
         cpu_fallback,
+        quality=body.quality,
     )
     try:
         start_export_job(request.app.frigate_config, export_job)

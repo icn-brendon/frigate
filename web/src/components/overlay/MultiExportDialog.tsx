@@ -41,6 +41,7 @@ import {
   BatchExportResponse,
   BatchExportResult,
   ExportCase,
+  ExportQuality,
 } from "@/types/export";
 import { FrigateConfig } from "@/types/frigateConfig";
 import { REVIEW_PADDING, ReviewSegment } from "@/types/review";
@@ -78,6 +79,7 @@ export default function MultiExportDialog({
   const [caseSelection, setCaseSelection] = useState<string>(NONE_CASE_OPTION);
   const [newCaseName, setNewCaseName] = useState("");
   const [newCaseDescription, setNewCaseDescription] = useState("");
+  const [quality, setQuality] = useState<ExportQuality>("auto");
   const [isExporting, setIsExporting] = useState(false);
 
   const count = selectedReviews.length;
@@ -135,6 +137,7 @@ export default function MultiExportDialog({
     setCaseSelection(NONE_CASE_OPTION);
     setNewCaseName("");
     setNewCaseDescription("");
+    setQuality("auto");
     setIsExporting(false);
   }, []);
 
@@ -147,6 +150,7 @@ export default function MultiExportDialog({
         setCaseSelection(NONE_CASE_OPTION);
         setNewCaseName(defaultCaseName);
         setNewCaseDescription("");
+        setQuality("auto");
         setIsExporting(false);
       }
       setOpen(next);
@@ -179,6 +183,7 @@ export default function MultiExportDialog({
       end_time: (review.end_time ?? Date.now() / 1000) + REVIEW_PADDING,
       image_path: review.thumb_path || undefined,
       client_item_id: review.id,
+      quality,
     }));
 
     const payload: BatchExportBody = { items };
@@ -278,6 +283,7 @@ export default function MultiExportDialog({
     newCaseDescription,
     newCaseName,
     onStarted,
+    quality,
     resetState,
     selectedReviews,
     t,
@@ -308,6 +314,32 @@ export default function MultiExportDialog({
 
   const body = (
     <div className="flex flex-col gap-4">
+      <div className="space-y-2">
+        <Label className="text-sm text-secondary-foreground">Quality</Label>
+        <div className="flex items-center gap-2">
+          <Button
+            className="flex h-9 min-w-[44px] items-center justify-center rounded-lg px-2 text-sm font-bold"
+            aria-label="Export in HD where available"
+            size="sm"
+            variant={quality === "auto" ? "select" : "default"}
+            onClick={() => setQuality("auto")}
+          >
+            HD
+          </Button>
+          <Button
+            className="flex h-9 min-w-[44px] items-center justify-center rounded-lg px-2 text-sm font-bold"
+            aria-label="Export in SD"
+            size="sm"
+            variant={quality === "sub" ? "select" : "default"}
+            onClick={() => setQuality("sub")}
+          >
+            SD
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {quality === "auto" ? "HD (SD where HD unavailable)" : "SD only"}
+          </span>
+        </div>
+      </div>
       {isAdmin && (
         <div className="space-y-2">
           <Label className="text-sm text-secondary-foreground">

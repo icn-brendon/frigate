@@ -18,6 +18,10 @@ export type ExportCase = {
   updated_at: number;
 };
 
+// "auto" exports HD (main stream) when any HD footage overlaps the range,
+// falling back to SD; "sub" forces SD; "main" forces HD only.
+export type ExportQuality = "auto" | "main" | "sub";
+
 export type BatchExportBody = {
   items: BatchExportItem[];
   export_case_id?: string;
@@ -34,6 +38,7 @@ export type BatchExportItem = {
   image_path?: string;
   friendly_name?: string;
   client_item_id?: string;
+  quality?: ExportQuality;
 };
 
 export type BatchExportResult = {

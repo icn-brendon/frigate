@@ -24,6 +24,7 @@ import {
   BatchExportResponse,
   CameraActivity,
   ExportCase,
+  ExportQuality,
   StartExportResponse,
 } from "@/types/export";
 import {
@@ -95,6 +96,7 @@ export default function ExportDialog({
   const [selectedCaseId, setSelectedCaseId] = useState<string | undefined>();
   const [singleNewCaseName, setSingleNewCaseName] = useState("");
   const [singleNewCaseDescription, setSingleNewCaseDescription] = useState("");
+  const [quality, setQuality] = useState<ExportQuality>("auto");
   const [activeTab, setActiveTab] = useState<ExportTab>("export");
   const [isStartingExport, setIsStartingExport] = useState(false);
   const previousModeRef = useRef<ExportMode>(mode);
@@ -157,6 +159,7 @@ export default function ExportDialog({
           source: "recordings",
           name,
           export_case_id: exportCaseId,
+          quality,
         },
       );
 
@@ -172,6 +175,7 @@ export default function ExportDialog({
       setSelectedCaseId(undefined);
       setSingleNewCaseName("");
       setSingleNewCaseDescription("");
+      setQuality("auto");
       setRange(undefined);
       setMode("none");
       return true;
@@ -197,6 +201,7 @@ export default function ExportDialog({
     camera,
     isStartingExport,
     name,
+    quality,
     range,
     selectedCaseId,
     singleNewCaseDescription,
@@ -211,6 +216,7 @@ export default function ExportDialog({
     setSelectedCaseId(undefined);
     setSingleNewCaseName("");
     setSingleNewCaseDescription("");
+    setQuality("auto");
     setMode("none");
     setRange(undefined);
     setActiveTab("export");
@@ -294,6 +300,7 @@ export default function ExportDialog({
             selectedCaseId={selectedCaseId}
             singleNewCaseName={singleNewCaseName}
             singleNewCaseDescription={singleNewCaseDescription}
+            quality={quality}
             activeTab={activeTab}
             isStartingExport={isStartingExport}
             onStartExport={onStartExport}
@@ -302,6 +309,7 @@ export default function ExportDialog({
             setSelectedCaseId={setSelectedCaseId}
             setSingleNewCaseName={setSingleNewCaseName}
             setSingleNewCaseDescription={setSingleNewCaseDescription}
+            setQuality={setQuality}
             setRange={setRange}
             setMode={setMode}
             onCancel={handleCancel}
@@ -320,6 +328,7 @@ type ExportContentProps = {
   selectedCaseId?: string;
   singleNewCaseName: string;
   singleNewCaseDescription: string;
+  quality: ExportQuality;
   activeTab: ExportTab;
   isStartingExport: boolean;
   onStartExport: () => Promise<boolean>;
@@ -328,6 +337,7 @@ type ExportContentProps = {
   setSelectedCaseId: (caseId: string | undefined) => void;
   setSingleNewCaseName: (name: string) => void;
   setSingleNewCaseDescription: (description: string) => void;
+  setQuality: (quality: ExportQuality) => void;
   setRange: (range: TimeRange | undefined) => void;
   setMode: (mode: ExportMode) => void;
   onCancel: () => void;
@@ -341,6 +351,7 @@ export function ExportContent({
   selectedCaseId,
   singleNewCaseName,
   singleNewCaseDescription,
+  quality,
   activeTab,
   isStartingExport,
   onStartExport,
@@ -349,6 +360,7 @@ export function ExportContent({
   setSelectedCaseId,
   setSingleNewCaseName,
   setSingleNewCaseDescription,
+  setQuality,
   setRange,
   setMode,
   onCancel,
@@ -597,6 +609,7 @@ export function ExportContent({
         friendly_name: name
           ? `${name} - ${resolveCameraName(config, cameraId)}`
           : undefined,
+        quality,
       })),
     };
 
@@ -668,6 +681,7 @@ export function ExportContent({
         setBatchCaseSelection("new");
         setNewCaseName("");
         setNewCaseDescription("");
+        setQuality("auto");
         setRange(undefined);
         setMode("none");
         setActiveTab("export");
@@ -701,16 +715,49 @@ export function ExportContent({
     name,
     newCaseDescription,
     newCaseName,
+    quality,
     range,
     selectedCameraIds,
     setActiveTab,
     setMode,
     setName,
+    setQuality,
     setRange,
     setSelectedCaseId,
     t,
     navigate,
   ]);
+
+  // HD/SD choice matching the recording view's stream quality toggle.
+  // "auto" exports HD with SD fallback; "sub" forces SD.
+  const qualitySelector = (
+    <div className="space-y-2">
+      <Label className="text-sm text-secondary-foreground">Quality</Label>
+      <div className="flex items-center gap-2">
+        <Button
+          className="flex h-9 min-w-[44px] items-center justify-center rounded-lg px-2 text-sm font-bold"
+          aria-label="Export in HD where available"
+          size="sm"
+          variant={quality === "auto" ? "select" : "default"}
+          onClick={() => setQuality("auto")}
+        >
+          HD
+        </Button>
+        <Button
+          className="flex h-9 min-w-[44px] items-center justify-center rounded-lg px-2 text-sm font-bold"
+          aria-label="Export in SD"
+          size="sm"
+          variant={quality === "sub" ? "select" : "default"}
+          onClick={() => setQuality("sub")}
+        >
+          SD
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {quality === "auto" ? "HD (SD where HD unavailable)" : "SD only"}
+        </span>
+      </div>
+    </div>
+  );
 
   return (
     <div
@@ -793,6 +840,8 @@ export function ExportContent({
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+
+          {qualitySelector}
 
           {isAdmin && (
             <div className="space-y-2">
@@ -988,6 +1037,8 @@ export function ExportContent({
               onChange={(e) => setName(e.target.value)}
             />
           </div>
+
+          {qualitySelector}
 
           {isAdmin && (
             <div className="space-y-2">
