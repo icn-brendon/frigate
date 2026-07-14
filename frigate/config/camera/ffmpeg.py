@@ -42,7 +42,7 @@ class FfmpegOutputArgsConfig(FrigateBaseModel):
         title="Record output arguments",
         description="Default output arguments for record role streams.",
     )
-    record_events: Union[str, list[str]] = Field(
+    record_events: str | list[str] = Field(
         default=RECORD_FFMPEG_OUTPUT_ARGS_DEFAULT,
         title="Record events output arguments",
         description="Default output arguments for record_events role streams (main stream event recording).",
