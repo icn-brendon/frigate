@@ -434,21 +434,15 @@ class RecordingMaintainer(threading.Thread):
         record_config = self.config.cameras[camera].record
         segment_stats: SegmentInfo | None = None
 
-        # Main stream event segments honor the configured event_recording
-        # retain mode (defaulting to "all" if unset). Previously this was
-        # hard-coded to RetainModeEnum.all and ignored user configuration.
+        # Main stream segments are kept unconditionally at ingest: the event
+        # recorder only promotes ring-buffer footage during events plus
+        # pre/post capture, so promotion is already the retention gate.
+        # event_recording.retain.mode applies at cleanup (cleanup.py), not
+        # here — object/motion stats live on the detect stream timeline and
+        # rarely align with the short promoted main segments, so a
+        # should_discard_segment() check here silently drops HD footage.
         if stream_quality == "main":
-            event_retain = record_config.event_recording.retain
-            main_retain_mode = (
-                event_retain.mode
-                if event_retain and event_retain.mode is not None
-                else RetainModeEnum.all
-            )
             segment_stats = self.segment_stats(camera, start_time, end_time)
-
-            if segment_stats.should_discard_segment(main_retain_mode):
-                self.drop_segment(cache_path)
-                return None
 
             return await self.move_segment(
                 camera,
