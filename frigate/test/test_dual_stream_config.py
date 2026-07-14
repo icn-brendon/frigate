@@ -11,7 +11,7 @@ import unittest
 from pydantic import ValidationError
 
 from frigate.config import FrigateConfig
-from frigate.const import MAX_PRE_CAPTURE, MODEL_CACHE_DIR
+from frigate.const import CACHE_SEGMENT_FORMAT, MAX_PRE_CAPTURE, MODEL_CACHE_DIR
 
 
 class TestDualStreamConfig(unittest.TestCase):
@@ -96,7 +96,13 @@ class TestDualStreamConfig(unittest.TestCase):
             FrigateConfig(**cfg)
 
     def test_record_events_role_and_record_on_same_input_rejected(self):
-        """record and record_events on same input should be rejected."""
+        """record and record_events on same input should be rejected.
+
+        Uses two inputs: with a single input, CameraConfig.__init__
+        rewrites the roles to ['record', 'detect'] before validation, so
+        the same-input conflict can only be observed on multi-input
+        configs.
+        """
         cfg = {
             "mqtt": {"host": "mqtt"},
             "cameras": {
@@ -105,8 +111,12 @@ class TestDualStreamConfig(unittest.TestCase):
                         "inputs": [
                             {
                                 "path": "rtsp://10.0.0.1:554/video",
-                                "roles": ["detect", "record", "record_events"],
-                            }
+                                "roles": ["detect"],
+                            },
+                            {
+                                "path": "rtsp://10.0.0.1:554/video_main",
+                                "roles": ["record", "record_events"],
+                            },
                         ]
                     },
                     "detect": {"height": 1080, "width": 1920, "fps": 5},
@@ -128,7 +138,6 @@ class TestDualStreamConfig(unittest.TestCase):
         """Two inputs (detect+record + record_events) pass validation and produce a
         record_events ffmpeg cmd."""
         frigate_config = FrigateConfig(**self.minimal_dual)
-        frigate_config = frigate_config.init()
         cam = frigate_config.cameras["back"]
 
         roles_in_cmds = [
@@ -144,22 +153,21 @@ class TestDualStreamConfig(unittest.TestCase):
         )
 
     def test_event_recording_enabled_without_record_events_role_warns(self):
-        """event_recording.enabled=True but no record_events input produces no
-        record_events ffmpeg cmd for that camera."""
+        """event_recording.enabled=True but no record_events input is
+        rejected at config load (fail-fast validator in CameraConfig:
+        a silent runtime warning would leave the user with a dead
+        feature)."""
         cfg = dict(self.minimal_single)
         cfg["cameras"]["back"]["record"] = {
             "enabled": True,
             "event_recording": {"enabled": True},
         }
-        frigate_config = FrigateConfig(**cfg).init()
-        cam = frigate_config.cameras["back"]
-
-        for entry in cam.ffmpeg_cmds:
-            roles = {
-                role.value if hasattr(role, "value") else role
-                for role in entry["roles"]
-            }
-            self.assertNotIn("record_events", roles)
+        with self.assertRaises(ValidationError) as ctx:
+            FrigateConfig(**cfg)
+        self.assertIn(
+            "no ffmpeg input with the 'record_events' role",
+            str(ctx.exception),
+        )
 
     def test_camera_name_ending_in_at_main_rejected(self):
         """A camera whose name ends with '@main' collides with the
@@ -234,8 +242,11 @@ class TestDualStreamConfig(unittest.TestCase):
             FrigateConfig(**cfg)
 
     def test_record_events_ffmpeg_output_has_main_suffix(self):
-        """The record_events ffmpeg cmd contains a cache path with `@main@`."""
-        frigate_config = FrigateConfig(**self.minimal_dual).init()
+        """The record_events ffmpeg cmd writes CACHE_SEGMENT_FORMAT-named
+        segments into the camera's event_buffer ring directory. (The
+        ``@main@`` marker is applied later, at promotion time by the
+        EventRecorder, not in the ffmpeg output path.)"""
+        frigate_config = FrigateConfig(**self.minimal_dual)
         cam = frigate_config.cameras["back"]
 
         main_cmd = None
@@ -250,7 +261,8 @@ class TestDualStreamConfig(unittest.TestCase):
 
         self.assertIsNotNone(main_cmd, "Expected a record_events ffmpeg cmd")
         flat = " ".join(main_cmd)
-        self.assertIn("@main@", flat)
+        self.assertIn("event_buffer/back", flat)
+        self.assertIn(CACHE_SEGMENT_FORMAT, flat)
 
 
 if __name__ == "__main__":
