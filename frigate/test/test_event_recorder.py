@@ -686,5 +686,160 @@ class TestStationaryRecordingThreshold(_RecorderFixture):
         self.assertFalse(state.is_active)
 
 
+class TestStationaryGracePeriodSemantics(unittest.TestCase):
+    """Focused tests for the corrected grace-period ordering in
+    ``_is_object_active``: ``stationary_recording_threshold`` is a grace
+    period honored BEFORE ``stationary_trigger_recording`` is consulted.
+    """
+
+    FPS = 5
+
+    @staticmethod
+    def _obj(motionless_count: int, label: str = "car") -> dict:
+        return {
+            "false_positive": False,
+            "motionless_count": motionless_count,
+            "label": label,
+        }
+
+    def _active(self, motionless_count: int, filters: dict) -> bool:
+        return ev.EventRecorder._is_object_active(
+            self._obj(motionless_count), filters, self.FPS
+        )
+
+    def test_trigger_false_with_threshold_active_during_grace_period(self):
+        """trigger=False + threshold=15s: an object motionless for LESS
+        than 15 s (i.e. < 15*fps frames) must still be active."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=15,
+            ),
+        }
+        # 15s * 5fps = 75 frames. Below the threshold -> still active.
+        self.assertTrue(self._active(1, filters))
+        self.assertTrue(self._active(30, filters))
+        self.assertTrue(self._active(74, filters))
+
+    def test_trigger_false_with_threshold_inactive_after_grace_period(self):
+        """trigger=False + threshold=15s: once motionless for 15 s or
+        more, the trigger flag decides -> inactive."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=15,
+            ),
+        }
+        # At/above 75 frames the object is stationary and trigger=False.
+        self.assertFalse(self._active(75, filters))
+        self.assertFalse(self._active(500, filters))
+
+    def test_trigger_false_without_threshold_inactive_immediately(self):
+        """trigger=False + no threshold: stationary the instant
+        motionless_count > 0 -> inactive immediately."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=None,
+            ),
+        }
+        self.assertFalse(self._active(1, filters))
+        self.assertFalse(self._active(100, filters))
+
+    def test_trigger_false_with_zero_threshold_inactive_immediately(self):
+        """threshold=0 behaves like no grace period at all."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=0,
+            ),
+        }
+        self.assertFalse(self._active(1, filters))
+
+    def test_trigger_true_default_always_active(self):
+        """Default config (trigger=True, threshold=None): stationary
+        objects sustain recording regardless of motionless time —
+        pre-existing behavior unchanged."""
+        filters = {"car": _FakeFilterConfig()}
+        self.assertTrue(self._active(1, filters))
+        self.assertTrue(self._active(10_000, filters))
+
+    def test_trigger_true_with_threshold_active_regardless(self):
+        """trigger=True + threshold set: active both during the grace
+        period and after it elapses (trigger=True wins either way)."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=True,
+                stationary_recording_threshold=15,
+            ),
+        }
+        self.assertTrue(self._active(10, filters))   # inside grace period
+        self.assertTrue(self._active(75, filters))   # exactly at threshold
+        self.assertTrue(self._active(5_000, filters))  # long past it
+
+    def test_moving_object_always_active(self):
+        """motionless_count == 0 is active even with trigger=False."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=None,
+            ),
+        }
+        self.assertTrue(self._active(0, filters))
+
+
+class TestStationaryGracePeriodEndToEnd(_RecorderFixture):
+    """Grace-period semantics exercised through the full
+    ``_process_detection_events`` flow."""
+
+    def _run_detection(self, recorder, objects):
+        data = ("cam1", None, time.time(), objects, [], [])
+        recorder.detection_subscriber.check_for_update.side_effect = [
+            ("detection", data),
+            None,
+        ]
+        recorder._process_detection_events()
+
+    def test_trigger_false_object_sustains_recording_until_threshold(self):
+        """trigger=False + threshold=15: a car that just stopped moving
+        keeps the camera active; once motionless past 15 s it no longer
+        does."""
+        filters = {
+            "car": _FakeFilterConfig(
+                stationary_trigger_recording=False,
+                stationary_recording_threshold=15,
+            ),
+        }
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        recorder.camera_configs["cam1"].objects.filters = filters
+        recorder.camera_configs["cam1"].detect.fps = 5
+        state = recorder.camera_states["cam1"]
+
+        # Motionless for 10 s (50 frames) < 15 s threshold -> active.
+        self._run_detection(
+            recorder,
+            [{"false_positive": False, "motionless_count": 50, "label": "car"}],
+        )
+        self.assertTrue(state.is_active)
+        self.assertGreater(state.last_activity_time, 0.0)
+
+        # Fresh recorder: motionless for 20 s (100 frames) -> no trigger.
+        recorder2 = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
+        recorder2.camera_configs["cam1"].objects.filters = filters
+        recorder2.camera_configs["cam1"].detect.fps = 5
+        state2 = recorder2.camera_states["cam1"]
+
+        self._run_detection(
+            recorder2,
+            [{"false_positive": False, "motionless_count": 100, "label": "car"}],
+        )
+        self.assertFalse(state2.is_active)
+        self.assertEqual(state2.last_activity_time, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

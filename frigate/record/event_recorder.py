@@ -189,13 +189,17 @@ class EventRecorder(threading.Thread):
         (i.e. should trigger or sustain mainstream event recording).
 
         An object with ``motionless_count == 0`` is always active.  For
-        stationary objects (motionless_count > 0), we check two things:
+        stationary objects (motionless_count > 0), two per-label settings
+        cooperate:
 
-        1. ``stationary_trigger_recording`` must be enabled for the label.
-        2. If ``stationary_recording_threshold`` (seconds) is set on the
-           filter, the object is only considered *stationary* once
-           ``motionless_count >= threshold * fps``.  Until that frame
-           count is reached the object is still treated as active.
+        1. ``stationary_recording_threshold`` (seconds) is a *grace
+           period*: until the object has been motionless for
+           ``threshold * fps`` frames it is not yet considered
+           stationary and remains active regardless of the trigger flag.
+        2. Once the grace period has elapsed (or immediately, when no
+           threshold is configured), ``stationary_trigger_recording``
+           decides whether the now-stationary object keeps sustaining
+           recording (True, the default) or stops doing so (False).
         """
         motionless = obj.get("motionless_count", 0)
         if motionless == 0:
@@ -206,20 +210,20 @@ class EventRecorder(threading.Thread):
             return False
 
         filt = obj_filters[label]
-        if not filt.stationary_trigger_recording:
-            return False
 
-        # If a seconds-based threshold is configured, the object is still
-        # "active" until it has been motionless for that many seconds.
+        # Grace period: while the object has been motionless for fewer
+        # than threshold seconds it is not yet "stationary", so it stays
+        # active regardless of stationary_trigger_recording. A threshold
+        # of None or 0 means no grace period.
         threshold_sec = getattr(filt, "stationary_recording_threshold", None)
-        if threshold_sec is not None:
+        if threshold_sec:
             threshold_frames = threshold_sec * max(camera_fps, 1)
             if motionless < threshold_frames:
                 return True  # not yet stationary — still active
 
-        # stationary_trigger_recording is True, so stationary objects
-        # still trigger recording.
-        return True
+        # The object is stationary; the per-label trigger flag decides
+        # whether it keeps sustaining recording.
+        return filt.stationary_trigger_recording
 
     # ------------------------ buffer maintenance -----------------------
 
