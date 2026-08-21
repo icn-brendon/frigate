@@ -47,7 +47,15 @@
   "recordings": {
     "documentTitle": "Recordings - Frigate",
     "invalidSharedLink": "Unable to open timestamped recording link due to parsing error.",
-    "invalidSharedCamera": "Unable to open timestamped recording link due to an unknown or unauthorized camera."
+    "invalidSharedCamera": "Unable to open timestamped recording link due to an unknown or unauthorized camera.",
+    "streamQuality": {
+      "toggle": "Toggle stream quality",
+      "main": "Playing main stream (HD)",
+      "mainUnavailable": "Main stream selected but unavailable for the current time.",
+      "sub": "Playing substream (SD). Click to switch to the main stream where available.",
+      "fallbackToMain": "SD selected, playing HD because no SD recordings are available for this time.",
+      "fallbackToSub": "HD selected, playing SD because no HD recordings are available for this time."
+    }
   },
   "calendarFilter": {
     "last24Hours": "Last 24 Hours"

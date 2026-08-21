@@ -1,7 +1,7 @@
 import datetime
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Mock complex imports before importing maintainer, saving originals so we can
 # restore them after import and avoid polluting sys.modules for other tests.
@@ -18,6 +18,7 @@ for name in _MOCKED_MODULES:
 # Now import the class under test
 from frigate.config import FrigateConfig  # noqa: E402
 from frigate.record.maintainer import RecordingMaintainer  # noqa: E402
+from frigate.record.warning_limiter import WarningRateLimiter  # noqa: E402
 
 # Restore original modules (or remove mock if there was no original)
 for name, orig in _originals.items():
@@ -28,6 +29,47 @@ for name, orig in _originals.items():
 
 
 class TestMaintainer(unittest.IsolatedAsyncioTestCase):
+    async def test_unprocessed_segment_warning_is_rate_limited(self):
+        config = MagicMock(spec=FrigateConfig)
+        camera_config = MagicMock()
+        camera_config.record.enabled = True
+        config.cameras = {"Front_Gate": camera_config}
+        maintainer = RecordingMaintainer(config, MagicMock())
+        maintainer.recordings_publisher = MagicMock()
+        maintainer.requestor = MagicMock()
+        maintainer.validate_and_move_segment = AsyncMock(return_value=None)
+
+        files = [
+            f"Front_Gate@202608200100{second:02d}+0000.mp4"
+            for second in range(17)
+        ]
+        clock = iter([100.0, 100.0, 401.0])
+        maintainer.cache_warning_limiter = WarningRateLimiter(
+            interval=300.0,
+            clock=lambda: next(clock),
+        )
+
+        with (
+            patch("frigate.record.maintainer.os.listdir", return_value=files),
+            patch("frigate.record.maintainer.os.path.isfile", return_value=True),
+            patch("frigate.record.maintainer.psutil.process_iter", return_value=[]),
+            patch("frigate.record.maintainer.Path.unlink"),
+            patch("frigate.record.maintainer.ReviewSegment.select") as select,
+            patch("frigate.record.maintainer.logger.warning") as warning,
+        ):
+            select.return_value.where.return_value.order_by.return_value = []
+            await maintainer.move_files()
+            await maintainer.move_files()
+            await maintainer.move_files()
+
+        matching = [
+            call
+            for call in warning.call_args_list
+            if call.args
+            and "Too many unprocessed recording segments" in call.args[0]
+        ]
+        self.assertEqual(2, len(matching))
+
     async def test_move_files_survives_bad_filename(self):
         config = MagicMock(spec=FrigateConfig)
         config.cameras = {}

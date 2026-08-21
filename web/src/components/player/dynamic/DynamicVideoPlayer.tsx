@@ -32,6 +32,7 @@ import {
   grabVideoSnapshot,
 } from "@/utils/snapshotUtil";
 import { isFirefox } from "react-device-detect";
+import { resolveRecordingPlayback } from "./recordingPlayback";
 
 /**
  * Dynamically switches between video playback and scrubbing preview player.
@@ -47,6 +48,7 @@ type DynamicVideoPlayerProps = {
   supportsFullscreen: boolean;
   fullscreen: boolean;
   streamQuality?: StreamQuality;
+  onPlaybackQualityChange?: (quality?: StreamQuality) => void;
   onControllerReady: (controller: DynamicVideoController) => void;
   onTimestampUpdate?: (timestamp: number) => void;
   onClipEnded?: () => void;
@@ -68,6 +70,7 @@ export default function DynamicVideoPlayer({
   supportsFullscreen,
   fullscreen,
   streamQuality = "sub",
+  onPlaybackQualityChange,
   onControllerReady,
   onTimestampUpdate,
   onClipEnded,
@@ -244,10 +247,35 @@ export default function DynamicVideoPlayer({
     }),
     [timeRange, streamQuality],
   );
-  const { data: recordings } = useSWR<Recording[]>(
+  const { data: requestedRecordings } = useSWR<Recording[]>(
     [`${camera}/recordings`, recordingParams],
     { revalidateOnFocus: false },
   );
+  const requestedPlayback = resolveRecordingPlayback(
+    streamQuality,
+    requestedRecordings,
+  );
+  const { data: fallbackRecordings } = useSWR<Recording[]>(
+    requestedPlayback.fallbackQuality
+      ? [
+          `${camera}/recordings`,
+          {
+            ...recordingParams,
+            quality: requestedPlayback.fallbackQuality,
+          },
+        ]
+      : null,
+    { revalidateOnFocus: false },
+  );
+  const { recordings, quality: playbackQuality } = resolveRecordingPlayback(
+    streamQuality,
+    requestedRecordings,
+    fallbackRecordings,
+  );
+
+  useEffect(() => {
+    onPlaybackQualityChange?.(recordings?.length ? playbackQuality : undefined);
+  }, [onPlaybackQualityChange, playbackQuality, recordings]);
 
   useEffect(() => {
     if (!recordings?.length) {
@@ -257,6 +285,8 @@ export default function DynamicVideoPlayer({
 
       return;
     }
+
+    setNoRecording(false);
 
     let startPosition = undefined;
 
@@ -273,14 +303,14 @@ export default function DynamicVideoPlayer({
       );
     }
 
-    const qualitySegment = streamQuality === "main" ? "/quality/main" : "";
+    const qualitySegment = playbackQuality === "main" ? "/quality/main" : "";
     setSource({
       playlist: `${apiHost}vod/${camera}/start/${recordingParams.after}/end/${recordingParams.before}${qualitySegment}/master.m3u8`,
       startPosition,
     });
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordings, streamQuality]);
+  }, [recordings, playbackQuality]);
 
   useEffect(() => {
     if (!controller || !recordings?.length) {

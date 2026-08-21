@@ -75,5 +75,70 @@ class TestMaintainerUnlinkFrameSlotsOnRemove(unittest.TestCase):
         self.assertEqual(maintainer.frame_manager.delete.call_count, 2)
 
 
+class TestMaintainerCameraRecovery(unittest.TestCase):
+    def test_recovery_preserves_metrics_and_frame_count(self) -> None:
+        maintainer = CameraMaintainer.__new__(CameraMaintainer)
+        camera_config = MagicMock(enabled_in_config=True, enabled=True)
+        maintainer.config = MagicMock(cameras={"Front_Gate": camera_config})
+        metrics = object()
+        ptz_metrics = object()
+        maintainer.camera_metrics = {"Front_Gate": metrics}
+        maintainer.ptz_metrics = {"Front_Gate": ptz_metrics}
+        maintainer.shm_count = 40
+        capture = MagicMock(shm_frame_count=23)
+        maintainer.capture_processes = {"Front_Gate": capture}
+        maintainer.camera_processes = {"Front_Gate": MagicMock()}
+
+        with (
+            patch.object(
+                maintainer,
+                "_CameraMaintainer__stop_camera_capture_process",
+            ) as stop_capture,
+            patch.object(
+                maintainer,
+                "_CameraMaintainer__stop_camera_process",
+            ) as stop_tracker,
+            patch.object(
+                maintainer,
+                "_CameraMaintainer__unlink_camera_frame_slots",
+            ) as unlink_slots,
+            patch.object(
+                maintainer,
+                "_CameraMaintainer__start_camera_processor",
+            ) as start_tracker,
+            patch.object(
+                maintainer,
+                "_CameraMaintainer__start_camera_capture",
+            ) as start_capture,
+        ):
+            maintainer._CameraMaintainer__restart_camera_processes("Front_Gate")
+
+        stop_capture.assert_called_once_with("Front_Gate")
+        stop_tracker.assert_called_once_with("Front_Gate")
+        unlink_slots.assert_called_once_with("Front_Gate")
+        start_tracker.assert_called_once_with("Front_Gate", camera_config)
+        start_capture.assert_called_once_with(
+            "Front_Gate",
+            camera_config,
+            shm_frame_count=23,
+        )
+        self.assertIs(metrics, maintainer.camera_metrics["Front_Gate"])
+        self.assertIs(ptz_metrics, maintainer.ptz_metrics["Front_Gate"])
+
+    def test_disabled_camera_is_not_supervised(self) -> None:
+        maintainer = CameraMaintainer.__new__(CameraMaintainer)
+        camera_config = MagicMock(enabled_in_config=True, enabled=False)
+        maintainer.config = MagicMock(cameras={"Front_Gate": camera_config})
+        maintainer.camera_processes = {"Front_Gate": MagicMock()}
+        maintainer.capture_processes = {"Front_Gate": MagicMock()}
+        maintainer.camera_metrics = {"Front_Gate": MagicMock()}
+        maintainer.process_supervisor = MagicMock()
+
+        maintainer._CameraMaintainer__check_camera_processes()
+
+        maintainer.process_supervisor.forget.assert_called_once_with("Front_Gate")
+        maintainer.process_supervisor.check.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,12 +37,14 @@ from frigate.const import (
     RECORD_DIR,
 )
 from frigate.models import Recordings, ReviewSegment
+from frigate.record.warning_limiter import WarningRateLimiter
 from frigate.review.types import SeverityEnum
 from frigate.util.services import get_video_properties
 
 logger = logging.getLogger(__name__)
 
 STALE_RECORDINGS_INFO_TTL = MAX_SEGMENTS_IN_CACHE * MAX_SEGMENT_DURATION * 2
+CACHE_WARNING_INTERVAL = 300.0
 
 
 class SegmentInfo:
@@ -102,6 +104,9 @@ class RecordingMaintainer(threading.Thread):
         self.audio_recordings_info: dict[str, list] = defaultdict(list)
         self.end_time_cache: dict[str, tuple[datetime.datetime, float]] = {}
         self.unexpected_cache_files_logged: bool = False
+        self.cache_warning_limiter = WarningRateLimiter(
+            interval=CACHE_WARNING_INTERVAL
+        )
 
     async def move_files(self) -> None:
         cache_files = [
@@ -265,9 +270,15 @@ class RecordingMaintainer(threading.Thread):
 
             # see if the recording mover is too slow and segments need to be deleted
             if processed_segment_count > keep_count:
-                logger.warning(
-                    f"Unable to keep up with recording segments in cache for {camera}. Keeping the {keep_count} most recent segments out of {processed_segment_count} and discarding the rest..."
-                )
+                if self.cache_warning_limiter.should_log((camera, "processed")):
+                    logger.warning(
+                        "Unable to keep up with recording segments in cache for %s. "
+                        "Keeping the %d most recent segments out of %d and "
+                        "discarding the rest",
+                        camera,
+                        keep_count,
+                        processed_segment_count,
+                    )
                 to_remove = grouped_recordings[camera][:-keep_count]
                 for rec in to_remove:
                     cache_path = rec["cache_path"]
@@ -280,9 +291,16 @@ class RecordingMaintainer(threading.Thread):
                 len(grouped_recordings[camera]) - processed_segment_count
             )
             if unprocessed_segment_count > keep_count:
-                logger.warning(
-                    f"Too many unprocessed recording segments in cache for {camera}. This likely indicates an issue with the detect stream, keeping the {keep_count} most recent segments out of {unprocessed_segment_count} and discarding the rest..."
-                )
+                if self.cache_warning_limiter.should_log((camera, "unprocessed")):
+                    logger.warning(
+                        "Too many unprocessed recording segments in cache for %s. "
+                        "This likely indicates an issue with the detect stream, "
+                        "keeping the %d most recent segments out of %d and "
+                        "discarding the rest",
+                        camera,
+                        keep_count,
+                        unprocessed_segment_count,
+                    )
                 to_remove = grouped_recordings[camera][:-keep_count]
                 for rec in to_remove:
                     cache_path = rec["cache_path"]

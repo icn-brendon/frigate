@@ -8,6 +8,7 @@ from multiprocessing.managers import DictProxy, SyncManager
 from multiprocessing.synchronize import Event as MpEvent
 
 from frigate.camera import CameraMetrics, PTZMetrics
+from frigate.camera.process_supervisor import CameraProcessSupervisor
 from frigate.config import FrigateConfig
 from frigate.config.camera import CameraConfig
 from frigate.config.camera.updater import (
@@ -59,6 +60,9 @@ class CameraMaintainer(threading.Thread):
         self.capture_processes: dict[str, mp.Process] = {}
         self.camera_stop_events: dict[str, MpEvent] = {}
         self.metrics_manager = metrics_manager
+        self.process_supervisor = CameraProcessSupervisor(
+            self.__restart_camera_processes
+        )
 
     def __ensure_camera_stop_event(self, camera: str) -> MpEvent:
         camera_stop_event = self.camera_stop_events.get(camera)
@@ -160,7 +164,11 @@ class CameraMaintainer(threading.Thread):
         logger.info(f"Camera processor started for {name}: {camera_process.pid}")
 
     def __start_camera_capture(
-        self, name: str, config: CameraConfig, runtime: bool = False
+        self,
+        name: str,
+        config: CameraConfig,
+        runtime: bool = False,
+        shm_frame_count: int | None = None,
     ) -> None:
         if not config.enabled_in_config:
             logger.info(f"Capture process not started for disabled camera {name}")
@@ -169,7 +177,10 @@ class CameraMaintainer(threading.Thread):
         camera_stop_event = self.__ensure_camera_stop_event(name)
 
         # pre-create shms
-        count = 10 if runtime else self.shm_count
+        if shm_frame_count is not None:
+            count = shm_frame_count
+        else:
+            count = 10 if runtime else self.shm_count
         for i in range(count):
             frame_size = config.frame_shape_yuv[0] * config.frame_shape_yuv[1]
             self.frame_manager.create(f"{config.name}_frame{i}", frame_size)
@@ -240,6 +251,55 @@ class CameraMaintainer(threading.Thread):
             logger.info(f"Closing frame queue for {camera}")
             empty_and_close_queue(self.camera_metrics[camera].frame_queue)
 
+    def __restart_camera_processes(self, camera: str) -> None:
+        """Recycle the capture and tracker process pair for one camera."""
+        config = self.config.cameras.get(camera)
+        if config is None or not config.enabled_in_config or not config.enabled:
+            self.process_supervisor.forget(camera)
+            return
+
+        capture_process = self.capture_processes.get(camera)
+        shm_frame_count = getattr(capture_process, "shm_frame_count", self.shm_count)
+        self.__stop_camera_capture_process(camera)
+        self.__stop_camera_process(camera)
+        self.__unlink_camera_frame_slots(camera)
+        self.capture_processes.pop(camera, None)
+        self.camera_processes.pop(camera, None)
+
+        # Preserve CameraMetrics and PTZMetrics because other long-lived workers
+        # may retain their proxies. The stop path drains the manager-backed frame
+        # queue without closing it, so the replacement pair can safely reuse it.
+        self.__start_camera_processor(camera, config)
+        self.__start_camera_capture(
+            camera,
+            config,
+            shm_frame_count=shm_frame_count,
+        )
+
+    def __check_camera_processes(self) -> None:
+        """Check active camera subprocesses for exits and frame stalls."""
+        cameras = set(self.camera_processes) | set(self.capture_processes)
+        for camera in cameras:
+            config = self.config.cameras.get(camera)
+            if (
+                config is None
+                or not config.enabled_in_config
+                or not config.enabled
+            ):
+                self.process_supervisor.forget(camera)
+                continue
+
+            metrics = self.camera_metrics.get(camera)
+            if metrics is None:
+                continue
+
+            self.process_supervisor.check(
+                camera,
+                self.camera_processes.get(camera),
+                self.capture_processes.get(camera),
+                detection_frame=float(metrics.detection_frame.value),
+            )
+
     def run(self) -> None:
         self.__init_historical_regions()
 
@@ -272,6 +332,7 @@ class CameraMaintainer(threading.Thread):
                         )
                 elif update_type == CameraConfigUpdateEnum.remove.name:
                     for camera in updated_cameras:
+                        self.process_supervisor.forget(camera)
                         self.__stop_camera_capture_process(camera)
                         self.__stop_camera_process(camera)
                         self.__unlink_camera_frame_slots(camera)
@@ -313,6 +374,8 @@ class CameraMaintainer(threading.Thread):
 
                         self.__start_camera_processor(camera, new_config, runtime=True)
                         self.__start_camera_capture(camera, new_config, runtime=True)
+
+            self.__check_camera_processes()
 
         # ensure the capture processes are done
         for camera in self.capture_processes.keys():

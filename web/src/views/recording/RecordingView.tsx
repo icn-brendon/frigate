@@ -172,6 +172,11 @@ export function RecordingView({
   // stream quality
 
   const [streamQuality, setStreamQuality] = useState<StreamQuality>("sub");
+  const [playbackQuality, setPlaybackQuality] = useState<StreamQuality>();
+  const toggleStreamQuality = useCallback(() => {
+    setPlaybackQuality(undefined);
+    setStreamQuality((previous) => (previous === "sub" ? "main" : "sub"));
+  }, []);
 
   // Main stream availability is driven by the backend record of which time
   // ranges have a main-stream segment on disk (populated by the event
@@ -326,6 +331,20 @@ export function RecordingView({
     () => getMainStreamAvailability(currentTime),
     [getMainStreamAvailability, currentTime],
   );
+  const isStreamQualityFallback =
+    playbackQuality !== undefined && playbackQuality !== streamQuality;
+  const showStreamQualityWarning =
+    isStreamQualityFallback ||
+    (streamQuality === "main" && !mainStreamAvailableForCurrentTime);
+  const streamQualityTooltip = isStreamQualityFallback
+    ? playbackQuality === "main"
+      ? t("recordings.streamQuality.fallbackToMain")
+      : t("recordings.streamQuality.fallbackToSub")
+    : streamQuality === "main"
+      ? mainStreamAvailableForCurrentTime
+        ? t("recordings.streamQuality.main")
+        : t("recordings.streamQuality.mainUnavailable")
+      : t("recordings.streamQuality.sub");
 
   const updateSelectedSegment = useCallback(
     (currentTime: number, updateStartTime: boolean) => {
@@ -701,29 +720,18 @@ export function RecordingView({
                 <TooltipTrigger asChild>
                   <Button
                     className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
-                    aria-label="Toggle stream quality"
+                    aria-label={t("recordings.streamQuality.toggle")}
                     size="sm"
                     variant={streamQuality === "main" ? "select" : "default"}
-                    onClick={() =>
-                      setStreamQuality((prev) =>
-                        prev === "sub" ? "main" : "sub",
-                      )
-                    }
+                    onClick={toggleStreamQuality}
                   >
                     <span>{streamQuality === "main" ? "HD" : "SD"}</span>
-                    {streamQuality === "main" &&
-                      !mainStreamAvailableForCurrentTime && (
-                        <span className="text-xs text-warning">!</span>
-                      )}
+                    {showStreamQualityWarning && (
+                      <span className="text-xs text-warning">!</span>
+                    )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  {streamQuality === "main"
-                    ? mainStreamAvailableForCurrentTime
-                      ? "Playing main stream (HD)"
-                      : "Main stream selected but unavailable for current time - falling back to substream"
-                    : "Playing substream (SD) - click to switch to main stream where available"}
-                </TooltipContent>
+                <TooltipContent>{streamQualityTooltip}</TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -733,29 +741,18 @@ export function RecordingView({
                 <TooltipTrigger asChild>
                   <Button
                     className="flex h-9 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-sm font-bold"
-                    aria-label="Toggle stream quality"
+                    aria-label={t("recordings.streamQuality.toggle")}
                     size="sm"
                     variant={streamQuality === "main" ? "select" : "default"}
-                    onClick={() =>
-                      setStreamQuality((prev) =>
-                        prev === "sub" ? "main" : "sub",
-                      )
-                    }
+                    onClick={toggleStreamQuality}
                   >
                     <span>{streamQuality === "main" ? "HD" : "SD"}</span>
-                    {streamQuality === "main" &&
-                      !mainStreamAvailableForCurrentTime && (
-                        <span className="text-xs text-warning">!</span>
-                      )}
+                    {showStreamQualityWarning && (
+                      <span className="text-xs text-warning">!</span>
+                    )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  {streamQuality === "main"
-                    ? mainStreamAvailableForCurrentTime
-                      ? "Playing main stream (HD)"
-                      : "Main stream selected but unavailable for current time - falling back to substream"
-                    : "Playing substream (SD) - click to switch to main stream where available"}
-                </TooltipContent>
+                <TooltipContent>{streamQualityTooltip}</TooltipContent>
               </Tooltip>
             )}
             <MobileCameraDrawer
@@ -1081,6 +1078,7 @@ export function RecordingView({
                   }
                   fullscreen={fullscreen}
                   streamQuality={streamQuality}
+                  onPlaybackQualityChange={setPlaybackQuality}
                   onTimestampUpdate={(timestamp) => {
                     setPlayerTime(timestamp);
                     setCurrentTime(timestamp);
