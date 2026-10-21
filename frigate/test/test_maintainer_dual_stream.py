@@ -63,10 +63,12 @@ class TestMoveFilesParsing(unittest.IsolatedAsyncioTestCase):
         maintainer.recordings_publisher = MagicMock()
         maintainer.requestor = MagicMock()
 
-        with patch("frigate.record.maintainer.os.listdir", return_value=files), \
-                patch("frigate.record.maintainer.os.path.isfile", return_value=True), \
-                patch("frigate.record.maintainer.psutil.process_iter", return_value=[]), \
-                patch("frigate.record.maintainer.ReviewSegment") as mock_rs:
+        with (
+            patch("frigate.record.maintainer.os.listdir", return_value=files),
+            patch("frigate.record.maintainer.os.path.isfile", return_value=True),
+            patch("frigate.record.maintainer.psutil.process_iter", return_value=[]),
+            patch("frigate.record.maintainer.ReviewSegment") as mock_rs,
+        ):
             # avoid DB: make the reviews query iterate as empty list
             mock_rs.select.return_value.where.return_value.order_by.return_value = []
             mock_rs.end_time = ReviewSegment.end_time
@@ -74,17 +76,13 @@ class TestMoveFilesParsing(unittest.IsolatedAsyncioTestCase):
 
     async def test_move_files_parses_main_stream_filename(self):
         captured = []
-        await self._run_move_files(
-            ["back@main@20260101000000+0000.mp4"], captured
-        )
+        await self._run_move_files(["back@main@20260101000000+0000.mp4"], captured)
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["stream_quality"], "main")
 
     async def test_move_files_parses_substream_filename_default_sub(self):
         captured = []
-        await self._run_move_files(
-            ["back@20260101000000+0000.mp4"], captured
-        )
+        await self._run_move_files(["back@20260101000000+0000.mp4"], captured)
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["stream_quality"], "sub")
 
@@ -96,7 +94,8 @@ class TestMoveFilesParsing(unittest.IsolatedAsyncioTestCase):
         quality ``sub`` (M5 fix)."""
         captured = []
         await self._run_move_files(
-            ["back@foo@bar@20260101000000+0000.mp4"], captured,
+            ["back@foo@bar@20260101000000+0000.mp4"],
+            captured,
         )
         # Camera was recognised under the at-bearing name.
         self.assertEqual(len(captured), 1)
@@ -107,7 +106,8 @@ class TestMoveFilesParsing(unittest.IsolatedAsyncioTestCase):
         (``<camera>@main@<ts>.mp4``). Camera name is ``back@foo``."""
         captured = []
         await self._run_move_files(
-            ["back@foo@main@20260101000000+0000.mp4"], captured,
+            ["back@foo@main@20260101000000+0000.mp4"],
+            captured,
         )
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["stream_quality"], "main")
@@ -128,7 +128,7 @@ class TestValidateAndMoveSegmentMainBranch(unittest.IsolatedAsyncioTestCase):
         maintainer.recordings_publisher = MagicMock()
         maintainer.move_segment = AsyncMock(return_value=None)
 
-        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         cache_path = "/tmp/back@main@20260101000000+0000.mp4"
         # prime end_time_cache so we don't probe with ffprobe
         maintainer.end_time_cache[cache_path] = (
@@ -171,9 +171,7 @@ class TestMoveSegmentFilenameAndRecord(unittest.IsolatedAsyncioTestCase):
         fake_seg_info.motion_heatmap = None
         maintainer.segment_stats = MagicMock(return_value=fake_seg_info)
 
-        start = datetime.datetime(
-            2026, 1, 1, 12, 34, 56, tzinfo=datetime.timezone.utc
-        )
+        start = datetime.datetime(2026, 1, 1, 12, 34, 56, tzinfo=datetime.UTC)
         end = start + datetime.timedelta(seconds=10)
         cache_path = os.path.join(tmpdir, "cache_input.mp4")
         # create the source file so getsize works
@@ -195,15 +193,22 @@ class TestMoveSegmentFilenameAndRecord(unittest.IsolatedAsyncioTestCase):
             p.stderr = None
             return p
 
-        with patch(
-            "frigate.record.maintainer.asyncio.create_subprocess_exec",
-            side_effect=fake_create_subprocess_exec,
-        ), patch("frigate.record.maintainer.RECORD_DIR", tmpdir), patch(
-            "frigate.record.maintainer.os.remove"
+        with (
+            patch(
+                "frigate.record.maintainer.asyncio.create_subprocess_exec",
+                side_effect=fake_create_subprocess_exec,
+            ),
+            patch("frigate.record.maintainer.RECORD_DIR", tmpdir),
+            patch("frigate.record.maintainer.os.remove"),
         ):
             result = await maintainer.move_segment(
-                "back", start, end, 10.0, cache_path,
-                fake_seg_info, stream_quality,
+                "back",
+                start,
+                end,
+                10.0,
+                cache_path,
+                fake_seg_info,
+                stream_quality,
             )
 
         return result, captured_paths
@@ -273,26 +278,22 @@ class TestMainBasenameProducesMainRecord(unittest.IsolatedAsyncioTestCase):
             cache_path = os.path.join(tmpdir, cache_file)
             with open(cache_path, "wb") as f:
                 f.write(b"\x00" * 1024)
-            start = datetime.datetime(
-                2026, 1, 1, tzinfo=datetime.timezone.utc
-            )
+            start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
             maintainer.end_time_cache[cache_path] = (
                 start + datetime.timedelta(seconds=10),
                 10.0,
             )
 
-            with patch(
-                "frigate.record.maintainer.CACHE_DIR", tmpdir
-            ), patch(
-                "frigate.record.maintainer.os.listdir",
-                return_value=[cache_file],
-            ), patch(
-                "frigate.record.maintainer.os.path.isfile", return_value=True
-            ), patch(
-                "frigate.record.maintainer.psutil.process_iter", return_value=[]
-            ), patch(
-                "frigate.record.maintainer.ReviewSegment"
-            ) as mock_rs:
+            with (
+                patch("frigate.record.maintainer.CACHE_DIR", tmpdir),
+                patch(
+                    "frigate.record.maintainer.os.listdir",
+                    return_value=[cache_file],
+                ),
+                patch("frigate.record.maintainer.os.path.isfile", return_value=True),
+                patch("frigate.record.maintainer.psutil.process_iter", return_value=[]),
+                patch("frigate.record.maintainer.ReviewSegment") as mock_rs,
+            ):
                 mock_rs.select.return_value.where.return_value.order_by.return_value = []
                 mock_rs.end_time = ReviewSegment.end_time
                 await maintainer.move_files()

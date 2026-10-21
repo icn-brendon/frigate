@@ -540,9 +540,7 @@ class CameraWatchdog(threading.Thread):
                     if cur_backoff > 0 and (now - last) < cur_backoff:
                         continue
 
-                    next_backoff = (
-                        1 if cur_backoff <= 0 else min(cur_backoff * 2, 60)
-                    )
+                    next_backoff = 1 if cur_backoff <= 0 else min(cur_backoff * 2, 60)
                     p["_backoff_seconds"] = next_backoff
                     p["_last_restart_at"] = now
                     p["_backoff_started_at"] = now

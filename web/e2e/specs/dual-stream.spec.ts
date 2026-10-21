@@ -15,7 +15,7 @@ async function configureDualStream(app: FrigateApp) {
   );
 }
 
-test.describe("Dual-stream release bench @critical", () => {
+test.describe("Dual-stream release bench @critical @mobile", () => {
   test("live view selects HD and switches back to SD", async ({ frigateApp }) => {
     await configureDualStream(frigateApp);
     await frigateApp.goto("/#front_door");

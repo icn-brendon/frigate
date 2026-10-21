@@ -29,7 +29,6 @@ import threading
 import time
 from multiprocessing.synchronize import Event as MpEvent
 from pathlib import Path
-from typing import Optional
 
 from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeEnum
 from frigate.config import CameraConfig, FrigateConfig
@@ -90,9 +89,7 @@ class EventRecorder(threading.Thread):
         self.ffmpeg_cmds = ffmpeg_cmds
         self.stop_event = stop_event
 
-        self.detection_subscriber = DetectionSubscriber(
-            DetectionTypeEnum.video.value
-        )
+        self.detection_subscriber = DetectionSubscriber(DetectionTypeEnum.video.value)
 
         self.camera_states: dict[str, CameraRecordingState] = {
             camera: CameraRecordingState() for camera in camera_configs
@@ -104,9 +101,7 @@ class EventRecorder(threading.Thread):
             try:
                 os.makedirs(_camera_buffer_dir(camera), exist_ok=True)
             except OSError as e:
-                logger.warning(
-                    f"Could not create event buffer dir for {camera}: {e}"
-                )
+                logger.warning(f"Could not create event buffer dir for {camera}: {e}")
 
     # ---------------------------- main loop ----------------------------
 
@@ -182,9 +177,7 @@ class EventRecorder(threading.Thread):
                     )
 
     @staticmethod
-    def _is_object_active(
-        obj: dict, obj_filters: dict, camera_fps: int
-    ) -> bool:
+    def _is_object_active(obj: dict, obj_filters: dict, camera_fps: int) -> bool:
         """Return True if the tracked object should be treated as active
         (i.e. should trigger or sustain mainstream event recording).
 
@@ -289,9 +282,7 @@ class EventRecorder(threading.Thread):
                         try:
                             Path(path).unlink(missing_ok=True)
                         except OSError as e:
-                            logger.debug(
-                                f"Failed to prune buffer segment {path}: {e}"
-                            )
+                            logger.debug(f"Failed to prune buffer segment {path}: {e}")
 
     def _promote_segment(
         self, camera: str, src_path: str, state: CameraRecordingState
@@ -330,9 +321,7 @@ class EventRecorder(threading.Thread):
             except OSError:
                 return
             ts_struct = time.localtime(mtime)
-            ts_str = time.strftime(
-                CACHE_SEGMENT_FORMAT.replace("%z", ""), ts_struct
-            )
+            ts_str = time.strftime(CACHE_SEGMENT_FORMAT.replace("%z", ""), ts_struct)
             tz_offset = time.strftime("%z", ts_struct)
             ts_str = f"{ts_str}{tz_offset}"
 
@@ -343,9 +332,7 @@ class EventRecorder(threading.Thread):
         counter = 0
         while os.path.exists(dest_path):
             counter += 1
-            dest_path = os.path.join(
-                CACHE_DIR, f"{camera}@main@{ts_str}_{counter}.mp4"
-            )
+            dest_path = os.path.join(CACHE_DIR, f"{camera}@main@{ts_str}_{counter}.mp4")
             if counter > 100:
                 logger.warning(
                     f"Refusing to promote {src_path}: too many name collisions"
@@ -365,9 +352,13 @@ class EventRecorder(threading.Thread):
         """No-op kept for backwards compatibility with prior call sites."""
         return
 
-    def _check_ffmpeg_health(self) -> None:  # pragma: no cover - retained for API compat
+    def _check_ffmpeg_health(
+        self,
+    ) -> None:  # pragma: no cover - retained for API compat
         """No-op: ffmpeg is owned by the camera process now."""
         return
 
-    def _stop_all_recordings(self) -> None:  # pragma: no cover - retained for API compat
+    def _stop_all_recordings(
+        self,
+    ) -> None:  # pragma: no cover - retained for API compat
         return

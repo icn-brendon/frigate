@@ -23,8 +23,8 @@ def main() -> int:
     """Isolate import mocks between modules and preserve every failed result."""
     failed = []
     for command in [
-        ["ruff", "check", "downstream"],
-        ["ruff", "format", "--check", "downstream"],
+        ["ruff", "check", "downstream", "frigate", "migrations"],
+        ["ruff", "format", "--check", "downstream", "frigate", "migrations"],
     ]:
         if subprocess.run(command, check=False).returncode:
             failed.append("process lint/format")

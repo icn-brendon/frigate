@@ -28,7 +28,6 @@ from frigate.config import RetainModeEnum
 from frigate.models import Previews, Recordings, ReviewSegment, UserReviewStatus
 from frigate.record.cleanup import RecordingCleanup
 
-
 DAY = 24 * 60 * 60
 
 
@@ -83,14 +82,10 @@ def _make_camera_config(
     )
 
     def _get_review_pre_capture(severity):
-        return (
-            alerts.pre_capture if severity == "alert" else detections.pre_capture
-        )
+        return alerts.pre_capture if severity == "alert" else detections.pre_capture
 
     def _get_review_post_capture(severity):
-        return (
-            alerts.post_capture if severity == "alert" else detections.post_capture
-        )
+        return alerts.post_capture if severity == "alert" else detections.post_capture
 
     record.get_review_pre_capture = _get_review_pre_capture
     record.get_review_post_capture = _get_review_post_capture
@@ -173,9 +168,7 @@ class _DualStreamRetentionBase(unittest.TestCase):
         return os.path.exists(path)
 
     def _row_exists(self, rec_id: str) -> bool:
-        return (
-            Recordings.select().where(Recordings.id == rec_id).count() > 0
-        )
+        return Recordings.select().where(Recordings.id == rec_id).count() > 0
 
 
 # =====================================================================
@@ -191,9 +184,7 @@ class TestQualityIsolation(_DualStreamRetentionBase):
         main_path = self._seed("main_old", "back", "main", old)
 
         cfg = _make_camera_config(continuous_days=1, motion_days=1)
-        continuous_expire = (
-            self.now - datetime.timedelta(days=1)
-        ).timestamp()
+        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
         motion_expire = continuous_expire
 
         self.cleanup.expire_existing_camera_recordings(
@@ -247,12 +238,8 @@ class TestMainRetainDays(_DualStreamRetentionBase):
 # =====================================================================
 class TestMainRetainModes(_DualStreamRetentionBase):
     def test_main_motion_mode_keeps_rows_with_motion(self):
-        with_motion = self._seed(
-            "main_motion", "back", "main", 30 * DAY, motion=1
-        )
-        with_dbfs = self._seed(
-            "main_audio", "back", "main", 30 * DAY, dBFS=3
-        )
+        with_motion = self._seed("main_motion", "back", "main", 30 * DAY, motion=1)
+        with_dbfs = self._seed("main_audio", "back", "main", 30 * DAY, dBFS=3)
         silent = self._seed("main_silent", "back", "main", 30 * DAY)
 
         cfg = _make_camera_config(
@@ -281,12 +268,8 @@ class TestMainRetainModes(_DualStreamRetentionBase):
         self.assertTrue(self._exists(young_silent))
 
     def test_main_active_objects_mode_only_keeps_rows_with_objects(self):
-        with_obj = self._seed(
-            "main_obj", "back", "main", 30 * DAY, objects=1, motion=1
-        )
-        motion_only = self._seed(
-            "main_motion_only", "back", "main", 30 * DAY, motion=1
-        )
+        with_obj = self._seed("main_obj", "back", "main", 30 * DAY, objects=1, motion=1)
+        motion_only = self._seed("main_motion_only", "back", "main", 30 * DAY, motion=1)
 
         cfg = _make_camera_config(
             event_retain_days=7,
@@ -315,9 +298,7 @@ class TestMainFallback(_DualStreamRetentionBase):
             "main_drop", "back", "main", 5 * DAY
         )  # older than 3-day fallback
 
-        cfg = _make_camera_config(
-            event_retain_days=0, continuous_days=3, motion_days=1
-        )
+        cfg = _make_camera_config(event_retain_days=0, continuous_days=3, motion_days=1)
         self.cleanup.expire_existing_camera_main_recordings(cfg, self.now)
 
         self.assertTrue(self._row_exists("main_keep"))
@@ -409,9 +390,7 @@ class TestCameraNameWithAt(_DualStreamRetentionBase):
         self.assertTrue(self._row_exists("sub_old"))
         self.assertTrue(self._exists(sub_path))
 
-        continuous_expire = (
-            self.now - datetime.timedelta(days=1)
-        ).timestamp()
+        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
         self.cleanup.expire_existing_camera_recordings(
             continuous_expire, continuous_expire, cfg, reviews=[]
         )
@@ -440,9 +419,7 @@ class TestConcurrentSweepSafety(_DualStreamRetentionBase):
             motion_days=1,
         )
 
-        continuous_expire = (
-            self.now - datetime.timedelta(days=1)
-        ).timestamp()
+        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
 
         # run sub pass then main pass
         self.cleanup.expire_existing_camera_recordings(
@@ -484,9 +461,7 @@ class TestZeroEventRetain(_DualStreamRetentionBase):
         old_path = self._seed("main_old", "back", "main", old, motion=1)
         young_path = self._seed("main_young", "back", "main", young, motion=1)
 
-        cfg = _make_camera_config(
-            event_retain_days=0, continuous_days=3, motion_days=3
-        )
+        cfg = _make_camera_config(event_retain_days=0, continuous_days=3, motion_days=3)
         self.cleanup.expire_existing_camera_main_recordings(cfg, self.now)
 
         # 3-day fallback drops the 30-day-old row but keeps the 1-day-old row
@@ -510,12 +485,8 @@ class TestNoValidFallback(_DualStreamRetentionBase):
         """
         old_path = self._seed("main_old", "back", "main", 30 * DAY)
 
-        cfg = _make_camera_config(
-            event_retain_days=0, continuous_days=0, motion_days=0
-        )
-        result = self.cleanup.expire_existing_camera_main_recordings(
-            cfg, self.now
-        )
+        cfg = _make_camera_config(event_retain_days=0, continuous_days=0, motion_days=0)
+        result = self.cleanup.expire_existing_camera_main_recordings(cfg, self.now)
 
         self.assertEqual(result, set())
         self.assertTrue(self._row_exists("main_old"))
@@ -537,9 +508,7 @@ class TestCleanupRespectsStreamQualityColumn(_DualStreamRetentionBase):
         cfg = _make_camera_config(
             continuous_days=1, motion_days=1, event_retain_days=30
         )
-        continuous_expire = (
-            self.now - datetime.timedelta(days=1)
-        ).timestamp()
+        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
         motion_expire = continuous_expire
 
         # Run the sub expire pass -- it should NOT touch main rows.

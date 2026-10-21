@@ -325,9 +325,7 @@ class RecordingCleanup(threading.Thread):
             if event_retain is not None and event_retain.mode is not None
             else RetainModeEnum.all
         )
-        expire_date = (
-            now - datetime.timedelta(days=retain_days)
-        ).timestamp()
+        expire_date = (now - datetime.timedelta(days=retain_days)).timestamp()
 
         recordings = (
             Recordings.select(
@@ -360,14 +358,18 @@ class RecordingCleanup(threading.Thread):
             # be zero on a misaligned segment, which is acceptable here
             # because we're past the configured retention horizon).
             if (
-                retain_mode == RetainModeEnum.motion
-                and recording.motion == 0
-                and recording.objects == 0
-                and recording.dBFS == 0
-            ) or (
-                retain_mode == RetainModeEnum.active_objects
-                and recording.objects == 0
-            ) or retain_mode == RetainModeEnum.all:
+                (
+                    retain_mode == RetainModeEnum.motion
+                    and recording.motion == 0
+                    and recording.objects == 0
+                    and recording.dBFS == 0
+                )
+                or (
+                    retain_mode == RetainModeEnum.active_objects
+                    and recording.objects == 0
+                )
+                or retain_mode == RetainModeEnum.all
+            ):
                 recording_path = Path(recording.path)
                 # Defence in depth: only ever unlink files this pass owns.
                 # Main segments are written as MM.SS_main.mp4. If we somehow
@@ -378,9 +380,7 @@ class RecordingCleanup(threading.Thread):
                     maybe_empty_dirs.add(recording_path.parent)
                 deleted_recordings.add(recording.id)
 
-        logger.debug(
-            f"Expiring {len(deleted_recordings)} main-stream recordings"
-        )
+        logger.debug(f"Expiring {len(deleted_recordings)} main-stream recordings")
         max_deletes = 100000
         deleted_recordings_list = list(deleted_recordings)
         for i in range(0, len(deleted_recordings_list), max_deletes):
@@ -476,9 +476,7 @@ class RecordingCleanup(threading.Thread):
             )
             # Main-stream event segments are expired independently using the
             # event_recording retention config (B1).
-            maybe_empty_dirs |= self.expire_existing_camera_main_recordings(
-                config, now
-            )
+            maybe_empty_dirs |= self.expire_existing_camera_main_recordings(config, now)
             logger.debug(f"End camera: {camera}.")
 
         logger.debug("End all cameras.")

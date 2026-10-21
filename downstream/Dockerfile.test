@@ -9,7 +9,7 @@ COPY downstream/ downstream/
 COPY pyproject.toml ./
 COPY generate_api_auth_spec.py ./
 COPY docs/static/frigate-api.yaml docs/static/frigate-api.yaml
-RUN python3 -c 'import json; from pathlib import Path; version = json.loads(Path("downstream/release.json").read_text())["upstream_tag"].removeprefix("v"); Path("frigate/version.py").write_text("VERSION = " + repr(version) + "\n")'
+RUN python3 -c 'import json; from pathlib import Path; version = json.loads(Path("downstream/release.json").read_text())["upstream_tag"].removeprefix("v"); Path("frigate/version.py").write_text("VERSION = " + json.dumps(version) + "\n")'
 ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp RUFF_CACHE_DIR=/tmp/ruff-cache
 USER 1000:1000
 ENTRYPOINT ["python3", "downstream/testbench.py"]

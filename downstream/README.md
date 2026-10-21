@@ -59,7 +59,7 @@ Each module gets a separate process so import mocks cannot affect other suites.
 | Ingest | HD/SD filenames and database quality tags, HD survives ingest without matching detect stats |
 | Retention | Independent HD/SD expiry; required files survive and expired files disappear |
 | Export | Auto HD selection, forced SD, SD fallback and adjacent upstream export regressions |
-| UI | TypeScript build; desktop/mobile HD/SD live and History controls and export choices |
+| UI | Lint and i18n extraction; TypeScript build; desktop/mobile HD/SD live and History controls and export choices |
 
 The legacy retention suite has one documented expected failure for an orphan
 file with no database row. This is not covered by row-based cleanup. Keep that

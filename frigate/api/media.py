@@ -601,13 +601,12 @@ async def vod_ts(
     # playlist, so playback is an HD-only highlights reel. The UI uses
     # /main_availability to know which time ranges have HD.
     if stream_quality == "main":
-        quality_filter = (Recordings.stream_quality == "main") | Recordings.path.endswith(
-            "_main.mp4"
-        )
+        quality_filter = (
+            Recordings.stream_quality == "main"
+        ) | Recordings.path.endswith("_main.mp4")
     else:
         quality_filter = (
-            (Recordings.stream_quality == "sub")
-            | (Recordings.stream_quality.is_null())
+            (Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null())
         ) & ~Recordings.path.endswith("_main.mp4")
 
     recordings_query = (
@@ -841,7 +840,9 @@ async def vod_clip(
     end_ts: float,
     quality: str = Query("sub", description="Stream quality: sub or main"),
 ):
-    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True, stream_quality=quality)
+    return await vod_ts(
+        camera_name, start_ts, end_ts, force_discontinuity=True, stream_quality=quality
+    )
 
 
 @router.get(

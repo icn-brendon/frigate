@@ -269,7 +269,11 @@ MAIN_AVAILABILITY_MAX_WINDOW_SECONDS = 7 * 24 * 60 * 60
 MAIN_AVAILABILITY_MAX_ROWS = 10_000
 
 
-@router.get("/{camera_name}/recordings/main_availability", dependencies=[Depends(require_camera_access)], operation_id="main_stream_availability")
+@router.get(
+    "/{camera_name}/recordings/main_availability",
+    dependencies=[Depends(require_camera_access)],
+    operation_id="main_stream_availability",
+)
 async def main_stream_availability(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),

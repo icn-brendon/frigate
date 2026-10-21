@@ -152,7 +152,9 @@ class CameraFfmpegConfig(FfmpegConfig):
             raise ValueError("The detect role is required.")
 
         for input in v:
-            input_roles = {role.value if hasattr(role, "value") else role for role in input.roles}
+            input_roles = {
+                role.value if hasattr(role, "value") else role for role in input.roles
+            }
             if "record" in input_roles and "record_events" in input_roles:
                 raise ValueError(
                     "The record and record_events roles must not be on the same input."
