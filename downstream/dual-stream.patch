@@ -414,7 +414,7 @@ index 361300daa70203d3c78011d2ff7c9b4100d22d2d..0d7e8f8349d27ac88e9ab82ce7192ca3
      try:
          start_export_job(request.app.frigate_config, export_job)
 diff --git a/frigate/api/media.py b/frigate/api/media.py
-index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe8361e70144 100644
+index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcdaaf1459f 100644
 --- a/frigate/api/media.py
 +++ b/frigate/api/media.py
 @@ -58,6 +58,21 @@ from frigate.util.object import create_empty_regions_grid
@@ -439,7 +439,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
  router = APIRouter(tags=[Tags.media])
  
  
-@@ -568,20 +583,40 @@ async def vod_ts(
+@@ -568,20 +583,39 @@ async def vod_ts(
      start_ts: float,
      end_ts: float,
      force_discontinuity: bool = False,
@@ -463,13 +463,12 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
 +    # playlist, so playback is an HD-only highlights reel. The UI uses
 +    # /main_availability to know which time ranges have HD.
 +    if stream_quality == "main":
-+        quality_filter = (Recordings.stream_quality == "main") | Recordings.path.endswith(
-+            "_main.mp4"
-+        )
++        quality_filter = (
++            Recordings.stream_quality == "main"
++        ) | Recordings.path.endswith("_main.mp4")
 +    else:
 +        quality_filter = (
-+            (Recordings.stream_quality == "sub")
-+            | (Recordings.stream_quality.is_null())
++            (Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null())
 +        ) & ~Recordings.path.endswith("_main.mp4")
 +
 +    recordings_query = (
@@ -482,7 +481,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
          )
          .where(
              Recordings.start_time.between(start_ts, end_ts)
-@@ -589,8 +624,8 @@ async def vod_ts(
+@@ -589,8 +623,8 @@ async def vod_ts(
              | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
          )
          .where(Recordings.camera == camera_name)
@@ -492,7 +491,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
      )
  
      clips = []
-@@ -599,7 +634,7 @@ async def vod_ts(
+@@ -599,7 +633,7 @@ async def vod_ts(
      max_duration_ms = MAX_SEGMENT_DURATION * 1000
  
      recording: Recordings
@@ -501,7 +500,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
          logger.debug(
              "VOD: processing recording: %s start=%s end=%s duration=%s",
              recording.path,
-@@ -700,6 +735,21 @@ async def vod_ts(
+@@ -700,6 +734,21 @@ async def vod_ts(
      )
  
  
@@ -523,7 +522,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
  @router.get(
      "/vod/{year_month}/{day}/{hour}/{camera_name}",
      dependencies=[Depends(require_camera_access)],
-@@ -718,7 +768,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
+@@ -718,7 +767,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
      description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
  )
  async def vod_hour(
@@ -537,7 +536,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
  ):
      parts = year_month.split("-")
      start_date = (
-@@ -729,7 +784,7 @@ async def vod_hour(
+@@ -729,7 +783,7 @@ async def vod_hour(
      start_ts = start_date.timestamp()
      end_ts = end_date.timestamp()
  
@@ -546,19 +545,21 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe83
  
  
  @router.get(
-@@ -784,8 +839,9 @@ async def vod_clip(
+@@ -784,8 +838,11 @@ async def vod_clip(
      camera_name: str,
      start_ts: float,
      end_ts: float,
 +    quality: str = Query("sub", description="Stream quality: sub or main"),
  ):
 -    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
-+    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True, stream_quality=quality)
++    return await vod_ts(
++        camera_name, start_ts, end_ts, force_discontinuity=True, stream_quality=quality
++    )
  
  
  @router.get(
 diff --git a/frigate/api/record.py b/frigate/api/record.py
-index 5db257f48203e8875a69a83ad4ca8c07e40898ff..e1814e7119feded312e842d332f78762ddbbf071 100644
+index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395b044a401 100644
 --- a/frigate/api/record.py
 +++ b/frigate/api/record.py
 @@ -168,6 +168,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
@@ -591,7 +592,7 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..e1814e7119feded312e842d332f78762
          )
          .order_by(Recordings.start_time)
          .dicts()
-@@ -254,6 +258,73 @@ async def recordings(
+@@ -254,6 +258,77 @@ async def recordings(
      return JSONResponse(content=list(recordings))
  
  
@@ -606,7 +607,11 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..e1814e7119feded312e842d332f78762
 +MAIN_AVAILABILITY_MAX_ROWS = 10_000
 +
 +
-+@router.get("/{camera_name}/recordings/main_availability", dependencies=[Depends(require_camera_access)], operation_id="main_stream_availability")
++@router.get(
++    "/{camera_name}/recordings/main_availability",
++    dependencies=[Depends(require_camera_access)],
++    operation_id="main_stream_availability",
++)
 +async def main_stream_availability(
 +    camera_name: str,
 +    after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
@@ -666,7 +671,7 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..e1814e7119feded312e842d332f78762
      "/recordings/unavailable",
      response_model=list[dict],
 diff --git a/frigate/config/camera/camera.py b/frigate/config/camera/camera.py
-index b9d2cef727e97f7d90785a36a8a8f9caf75782f3..a90b949c5ccecd6282bbd5f78461abce62e4dc6b 100644
+index b9d2cef727e97f7d90785a36a8a8f9caf75782f3..52b031c0793d44ac615cbf0c00a02e8994aaf492 100644
 --- a/frigate/config/camera/camera.py
 +++ b/frigate/config/camera/camera.py
 @@ -3,7 +3,12 @@ from enum import Enum
@@ -738,7 +743,7 @@ index b9d2cef727e97f7d90785a36a8a8f9caf75782f3..a90b949c5ccecd6282bbd5f78461abce
      @property
      def frame_shape(self) -> tuple[int, int]:
          return self.detect.height, self.detect.width
-@@ -294,6 +347,64 @@ class CameraConfig(FrigateBaseModel):
+@@ -294,6 +347,62 @@ class CameraConfig(FrigateBaseModel):
                  + ffmpeg_output_args
              )
  
@@ -794,9 +799,7 @@ index b9d2cef727e97f7d90785a36a8a8f9caf75782f3..a90b949c5ccecd6282bbd5f78461abce
 +                pass
 +            ffmpeg_output_args = (
 +                record_events_args
-+                + [
-+                    f"{os.path.join(event_buffer_dir, CACHE_SEGMENT_FORMAT)}.mp4"
-+                ]
++                + [f"{os.path.join(event_buffer_dir, CACHE_SEGMENT_FORMAT)}.mp4"]
 +                + ffmpeg_output_args
 +            )
 +
@@ -804,7 +807,7 @@ index b9d2cef727e97f7d90785a36a8a8f9caf75782f3..a90b949c5ccecd6282bbd5f78461abce
          if len(ffmpeg_output_args) == 0:
              return None
 diff --git a/frigate/config/camera/ffmpeg.py b/frigate/config/camera/ffmpeg.py
-index ad7cbc8aa10f16baa6f4bfb2e6a4233af5d1eec5..3469b88c9cdda88f22796a31544eba7b3098e54f 100644
+index ad7cbc8aa10f16baa6f4bfb2e6a4233af5d1eec5..136a2605dcb92ad2c4c558713075d11db7916aef 100644
 --- a/frigate/config/camera/ffmpeg.py
 +++ b/frigate/config/camera/ffmpeg.py
 @@ -42,6 +42,11 @@ class FfmpegOutputArgsConfig(FrigateBaseModel):
@@ -827,12 +830,14 @@ index ad7cbc8aa10f16baa6f4bfb2e6a4233af5d1eec5..3469b88c9cdda88f22796a31544eba7b
      detect = "detect"
  
  
-@@ -145,4 +151,11 @@ class CameraFfmpegConfig(FfmpegConfig):
+@@ -145,4 +151,13 @@ class CameraFfmpegConfig(FfmpegConfig):
          if "detect" not in roles:
              raise ValueError("The detect role is required.")
  
 +        for input in v:
-+            input_roles = {role.value if hasattr(role, "value") else role for role in input.roles}
++            input_roles = {
++                role.value if hasattr(role, "value") else role for role in input.roles
++            }
 +            if "record" in input_roles and "record_events" in input_roles:
 +                raise ValueError(
 +                    "The record and record_events roles must not be on the same input."
@@ -1019,7 +1024,7 @@ index d927a12c838048f594956b6ce75aef0eba8cdd3a..c15b0e68e3187d54476414a1bdd64d99
  
  class ExportCase(Model):
 diff --git a/frigate/record/cleanup.py b/frigate/record/cleanup.py
-index 71097f1d950602e8641172870b77d2c6a91ce3ab..b1aa7ccfd249f64eda2036cc26c3ffa43d43f61b 100644
+index 71097f1d950602e8641172870b77d2c6a91ce3ab..cbad9330f3d22e449cc4585fa599aa209e4a65f8 100644
 --- a/frigate/record/cleanup.py
 +++ b/frigate/record/cleanup.py
 @@ -114,7 +114,17 @@ class RecordingCleanup(threading.Thread):
@@ -1087,9 +1092,7 @@ index 71097f1d950602e8641172870b77d2c6a91ce3ab..b1aa7ccfd249f64eda2036cc26c3ffa4
 +            if event_retain is not None and event_retain.mode is not None
 +            else RetainModeEnum.all
 +        )
-+        expire_date = (
-+            now - datetime.timedelta(days=retain_days)
-+        ).timestamp()
++        expire_date = (now - datetime.timedelta(days=retain_days)).timestamp()
 +
 +        recordings = (
 +            Recordings.select(
@@ -1122,14 +1125,18 @@ index 71097f1d950602e8641172870b77d2c6a91ce3ab..b1aa7ccfd249f64eda2036cc26c3ffa4
 +            # be zero on a misaligned segment, which is acceptable here
 +            # because we're past the configured retention horizon).
 +            if (
-+                retain_mode == RetainModeEnum.motion
-+                and recording.motion == 0
-+                and recording.objects == 0
-+                and recording.dBFS == 0
-+            ) or (
-+                retain_mode == RetainModeEnum.active_objects
-+                and recording.objects == 0
-+            ) or retain_mode == RetainModeEnum.all:
++                (
++                    retain_mode == RetainModeEnum.motion
++                    and recording.motion == 0
++                    and recording.objects == 0
++                    and recording.dBFS == 0
++                )
++                or (
++                    retain_mode == RetainModeEnum.active_objects
++                    and recording.objects == 0
++                )
++                or retain_mode == RetainModeEnum.all
++            ):
 +                recording_path = Path(recording.path)
 +                # Defence in depth: only ever unlink files this pass owns.
 +                # Main segments are written as MM.SS_main.mp4. If we somehow
@@ -1140,9 +1147,7 @@ index 71097f1d950602e8641172870b77d2c6a91ce3ab..b1aa7ccfd249f64eda2036cc26c3ffa4
 +                    maybe_empty_dirs.add(recording_path.parent)
 +                deleted_recordings.add(recording.id)
 +
-+        logger.debug(
-+            f"Expiring {len(deleted_recordings)} main-stream recordings"
-+        )
++        logger.debug(f"Expiring {len(deleted_recordings)} main-stream recordings")
 +        max_deletes = 100000
 +        deleted_recordings_list = list(deleted_recordings)
 +        for i in range(0, len(deleted_recordings_list), max_deletes):
@@ -1155,24 +1160,22 @@ index 71097f1d950602e8641172870b77d2c6a91ce3ab..b1aa7ccfd249f64eda2036cc26c3ffa4
      def expire_recordings(self) -> set[Path]:
          """Delete recordings based on retention config."""
          logger.debug("Start expire recordings.")
-@@ -364,6 +474,11 @@ class RecordingCleanup(threading.Thread):
+@@ -364,6 +474,9 @@ class RecordingCleanup(threading.Thread):
              maybe_empty_dirs |= self.expire_existing_camera_recordings(
                  continuous_expire_date, motion_expire_date, config, reviews
              )
 +            # Main-stream event segments are expired independently using the
 +            # event_recording retention config (B1).
-+            maybe_empty_dirs |= self.expire_existing_camera_main_recordings(
-+                config, now
-+            )
++            maybe_empty_dirs |= self.expire_existing_camera_main_recordings(config, now)
              logger.debug(f"End camera: {camera}.")
  
          logger.debug("End all cameras.")
 diff --git a/frigate/record/event_recorder.py b/frigate/record/event_recorder.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd63c94aa07
+index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f134382a929e5
 --- /dev/null
 +++ b/frigate/record/event_recorder.py
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,364 @@
 +"""Record main stream segments during motion/detection events.
 +
 +The mainstream ffmpeg process for a camera with the ``record_events`` role
@@ -1204,7 +1207,6 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +import time
 +from multiprocessing.synchronize import Event as MpEvent
 +from pathlib import Path
-+from typing import Optional
 +
 +from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeEnum
 +from frigate.config import CameraConfig, FrigateConfig
@@ -1265,9 +1267,7 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +        self.ffmpeg_cmds = ffmpeg_cmds
 +        self.stop_event = stop_event
 +
-+        self.detection_subscriber = DetectionSubscriber(
-+            DetectionTypeEnum.video.value
-+        )
++        self.detection_subscriber = DetectionSubscriber(DetectionTypeEnum.video.value)
 +
 +        self.camera_states: dict[str, CameraRecordingState] = {
 +            camera: CameraRecordingState() for camera in camera_configs
@@ -1279,9 +1279,7 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +            try:
 +                os.makedirs(_camera_buffer_dir(camera), exist_ok=True)
 +            except OSError as e:
-+                logger.warning(
-+                    f"Could not create event buffer dir for {camera}: {e}"
-+                )
++                logger.warning(f"Could not create event buffer dir for {camera}: {e}")
 +
 +    # ---------------------------- main loop ----------------------------
 +
@@ -1357,9 +1355,7 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +                    )
 +
 +    @staticmethod
-+    def _is_object_active(
-+        obj: dict, obj_filters: dict, camera_fps: int
-+    ) -> bool:
++    def _is_object_active(obj: dict, obj_filters: dict, camera_fps: int) -> bool:
 +        """Return True if the tracked object should be treated as active
 +        (i.e. should trigger or sustain mainstream event recording).
 +
@@ -1464,9 +1460,7 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +                        try:
 +                            Path(path).unlink(missing_ok=True)
 +                        except OSError as e:
-+                            logger.debug(
-+                                f"Failed to prune buffer segment {path}: {e}"
-+                            )
++                            logger.debug(f"Failed to prune buffer segment {path}: {e}")
 +
 +    def _promote_segment(
 +        self, camera: str, src_path: str, state: CameraRecordingState
@@ -1505,9 +1499,7 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +            except OSError:
 +                return
 +            ts_struct = time.localtime(mtime)
-+            ts_str = time.strftime(
-+                CACHE_SEGMENT_FORMAT.replace("%z", ""), ts_struct
-+            )
++            ts_str = time.strftime(CACHE_SEGMENT_FORMAT.replace("%z", ""), ts_struct)
 +            tz_offset = time.strftime("%z", ts_struct)
 +            ts_str = f"{ts_str}{tz_offset}"
 +
@@ -1518,9 +1510,7 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +        counter = 0
 +        while os.path.exists(dest_path):
 +            counter += 1
-+            dest_path = os.path.join(
-+                CACHE_DIR, f"{camera}@main@{ts_str}_{counter}.mp4"
-+            )
++            dest_path = os.path.join(CACHE_DIR, f"{camera}@main@{ts_str}_{counter}.mp4")
 +            if counter > 100:
 +                logger.warning(
 +                    f"Refusing to promote {src_path}: too many name collisions"
@@ -1540,11 +1530,15 @@ index 0000000000000000000000000000000000000000..ef15d649a28a6c4dbecdd64d892e7fd6
 +        """No-op kept for backwards compatibility with prior call sites."""
 +        return
 +
-+    def _check_ffmpeg_health(self) -> None:  # pragma: no cover - retained for API compat
++    def _check_ffmpeg_health(
++        self,
++    ) -> None:  # pragma: no cover - retained for API compat
 +        """No-op: ffmpeg is owned by the camera process now."""
 +        return
 +
-+    def _stop_all_recordings(self) -> None:  # pragma: no cover - retained for API compat
++    def _stop_all_recordings(
++        self,
++    ) -> None:  # pragma: no cover - retained for API compat
 +        return
 diff --git a/frigate/record/export.py b/frigate/record/export.py
 index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a98197cb9d728 100644
@@ -1944,10 +1938,10 @@ index 624ed6e9a20115615862011cf2846922413ff805..68c0d839dba9ac1d06b01d5eaa085936
 +            event_recorder.start()
 diff --git a/frigate/test/test_dual_stream_config.py b/frigate/test/test_dual_stream_config.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..abd0dce98ea2238826eea6e4cadea96da928f01c
+index 0000000000000000000000000000000000000000..ad6e1f1208254b811fdcf3896be76d2f34c9d1a7
 --- /dev/null
 +++ b/frigate/test/test_dual_stream_config.py
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,266 @@
 +"""Unit tests for dual-stream recording config validation.
 +
 +Covers EventRecordingConfig defaults/bounds, the new `record_events` camera role,
@@ -2091,10 +2085,7 @@ index 0000000000000000000000000000000000000000..abd0dce98ea2238826eea6e4cadea96d
 +        cam = frigate_config.cameras["back"]
 +
 +        roles_in_cmds = [
-+            {
-+                role.value if hasattr(role, "value") else role
-+                for role in entry["roles"]
-+            }
++            {role.value if hasattr(role, "value") else role for role in entry["roles"]}
 +            for entry in cam.ffmpeg_cmds
 +        ]
 +        self.assertTrue(
@@ -2360,10 +2351,10 @@ index 0000000000000000000000000000000000000000..8c03721e7401e453262b276fb209f6d2
 +    unittest.main()
 diff --git a/frigate/test/test_event_recorder.py b/frigate/test/test_event_recorder.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105a12ce7ec
+index 0000000000000000000000000000000000000000..5a68f587291fb747060cb4a018c5e215e00e7399
 --- /dev/null
 +++ b/frigate/test/test_event_recorder.py
-@@ -0,0 +1,849 @@
+@@ -0,0 +1,827 @@
 +"""Unit tests for the ring-buffer-promote `EventRecorder`.
 +
 +The post-rewrite `EventRecorder` no longer spawns ffmpeg. It watches a
@@ -2409,7 +2400,7 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +
 +
 +def _utc_fromtimestamp(timestamp: float) -> datetime.datetime:
-+    return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
++    return datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
 +
 +
 +def _ts_filename(dt: datetime.datetime) -> str:
@@ -2490,9 +2481,7 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +
 +        with patch.object(ev, "DetectionSubscriber") as sub_cls:
 +            sub_cls.return_value = MagicMock()
-+            recorder = ev.EventRecorder(
-+                frigate_config, camera_configs, {}, stop_event
-+            )
++            recorder = ev.EventRecorder(frigate_config, camera_configs, {}, stop_event)
 +        return recorder
 +
 +    def _seed_buffer_file(
@@ -2572,10 +2561,7 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +
 +        # Two older files promoted into CACHE_DIR with @main@ naming; the
 +        # newest (still being written) must stay in the buffer.
-+        promoted = [
-+            f for f in os.listdir(self.cache_dir)
-+            if f.startswith("cam1@main@")
-+        ]
++        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
 +        self.assertEqual(len(promoted), 2)
 +        self.assertTrue(os.path.exists(newest))
 +
@@ -2599,16 +2585,11 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +
 +        recorder._tick_buffers()
 +
-+        promoted = [
-+            f for f in os.listdir(self.cache_dir)
-+            if f.startswith("cam1@main@")
-+        ]
++        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
 +        self.assertEqual(len(promoted), 1)
 +
 +    def test_returns_to_idle_after_post_capture_elapsed(self):
-+        recorder = self._make_recorder(
-+            cameras=("cam1",), pre_capture=2, post_capture=5
-+        )
++        recorder = self._make_recorder(cameras=("cam1",), pre_capture=2, post_capture=5)
 +        now = time.time()
 +        state = recorder.camera_states["cam1"]
 +        state.is_active = True
@@ -2616,12 +2597,8 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +        state.promoted_paths = {"/some/path"}
 +
 +        # Seed a couple files so the idle branch has something to work on.
-+        self._seed_buffer_file(
-+            "cam1", _utc_fromtimestamp(now - 3)
-+        )
-+        self._seed_buffer_file(
-+            "cam1", _utc_fromtimestamp(now - 1)
-+        )
++        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 3))
++        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 1))
 +
 +        recorder._tick_buffers()
 +
@@ -2634,9 +2611,7 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +        """If no camera has event_recording.enabled, _tick_buffers on an
 +        empty buffer directory must not raise and must not write into
 +        CACHE_DIR."""
-+        recorder = self._make_recorder(
-+            cameras=("cam1",), event_recording_enabled=False
-+        )
++        recorder = self._make_recorder(cameras=("cam1",), event_recording_enabled=False)
 +        # Nothing seeded -> nothing to promote or prune.
 +        recorder._tick_buffers()
 +        self.assertEqual(os.listdir(self.cache_dir), [])
@@ -2688,20 +2663,13 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +        # Name-timestamp is T-5, but mtime is skewed forward by ~3 s to
 +        # simulate write-completion-time drift.
 +        name_dt = _utc_fromtimestamp(now - 5)
-+        self._seed_buffer_file(
-+            "cam1", name_dt, mtime_override=now - 2
-+        )
++        self._seed_buffer_file("cam1", name_dt, mtime_override=now - 2)
 +        # Newest sentinel so the older one is considered closed.
-+        self._seed_buffer_file(
-+            "cam1", _utc_fromtimestamp(now - 0.1)
-+        )
++        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 0.1))
 +
 +        recorder._tick_buffers()
 +
-+        promoted = [
-+            f for f in os.listdir(self.cache_dir)
-+            if f.startswith("cam1@main@")
-+        ]
++        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
 +        self.assertEqual(len(promoted), 1)
 +        # Expected suffix mirrors the name_dt in CACHE_SEGMENT_FORMAT.
 +        expected_ts = name_dt.strftime(CACHE_SEGMENT_FORMAT)
@@ -2720,16 +2688,11 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +
 +        name_dt = _utc_fromtimestamp(now - 5)
 +        self._seed_buffer_file("cam1", name_dt)
-+        self._seed_buffer_file(
-+            "cam1", _utc_fromtimestamp(now - 0.1)
-+        )
++        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 0.1))
 +
 +        recorder._tick_buffers()
 +
-+        promoted = [
-+            f for f in os.listdir(self.cache_dir)
-+            if f.startswith("cam1@main@")
-+        ]
++        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
 +        self.assertEqual(len(promoted), 1)
 +        # "cam1@main@<ts>.mp4" -> extract <ts>
 +        ts_part = promoted[0].split("@main@", 1)[1]
@@ -2980,7 +2943,9 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +                stationary_recording_threshold=10,
 +            ),
 +        }
-+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
++        recorder = self._make_recorder(
++            cameras=("cam1",), pre_capture=5, post_capture=10
++        )
 +        recorder.camera_configs["cam1"].objects.filters = filters
 +        recorder.camera_configs["cam1"].detect.fps = 5
 +        state = recorder.camera_states["cam1"]
@@ -3008,7 +2973,9 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +                stationary_recording_threshold=10,
 +            ),
 +        }
-+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
++        recorder = self._make_recorder(
++            cameras=("cam1",), pre_capture=5, post_capture=10
++        )
 +        recorder.camera_configs["cam1"].objects.filters = filters
 +        recorder.camera_configs["cam1"].detect.fps = 5
 +        state = recorder.camera_states["cam1"]
@@ -3036,7 +3003,9 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +                stationary_recording_threshold=None,
 +            ),
 +        }
-+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
++        recorder = self._make_recorder(
++            cameras=("cam1",), pre_capture=5, post_capture=10
++        )
 +        recorder.camera_configs["cam1"].objects.filters = filters
 +        recorder.camera_configs["cam1"].detect.fps = 5
 +        state = recorder.camera_states["cam1"]
@@ -3143,8 +3112,8 @@ index 0000000000000000000000000000000000000000..df398bbf7316be3de67dabda87632105
 +                stationary_recording_threshold=15,
 +            ),
 +        }
-+        self.assertTrue(self._active(10, filters))   # inside grace period
-+        self.assertTrue(self._active(75, filters))   # exactly at threshold
++        self.assertTrue(self._active(10, filters))  # inside grace period
++        self.assertTrue(self._active(75, filters))  # exactly at threshold
 +        self.assertTrue(self._active(5_000, filters))  # long past it
 +
 +    def test_moving_object_always_active(self):
@@ -3492,10 +3461,10 @@ index 0000000000000000000000000000000000000000..a39bbf49f2c5873b8ea3f0818f8497ff
 +    unittest.main()
 diff --git a/frigate/test/test_maintainer_dual_stream.py b/frigate/test/test_maintainer_dual_stream.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499de6f99936
+index 0000000000000000000000000000000000000000..676cd73fde365d481eafd4b8e079779151d41994
 --- /dev/null
 +++ b/frigate/test/test_maintainer_dual_stream.py
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,358 @@
 +"""Unit tests for maintainer dual-quality cache-file parsing and move_segment.
 +
 +Mirrors the import-mocking pattern in ``test_maintainer.py`` so the heavy comms
@@ -3561,10 +3530,12 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +        maintainer.recordings_publisher = MagicMock()
 +        maintainer.requestor = MagicMock()
 +
-+        with patch("frigate.record.maintainer.os.listdir", return_value=files), \
-+                patch("frigate.record.maintainer.os.path.isfile", return_value=True), \
-+                patch("frigate.record.maintainer.psutil.process_iter", return_value=[]), \
-+                patch("frigate.record.maintainer.ReviewSegment") as mock_rs:
++        with (
++            patch("frigate.record.maintainer.os.listdir", return_value=files),
++            patch("frigate.record.maintainer.os.path.isfile", return_value=True),
++            patch("frigate.record.maintainer.psutil.process_iter", return_value=[]),
++            patch("frigate.record.maintainer.ReviewSegment") as mock_rs,
++        ):
 +            # avoid DB: make the reviews query iterate as empty list
 +            mock_rs.select.return_value.where.return_value.order_by.return_value = []
 +            mock_rs.end_time = ReviewSegment.end_time
@@ -3572,17 +3543,13 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +
 +    async def test_move_files_parses_main_stream_filename(self):
 +        captured = []
-+        await self._run_move_files(
-+            ["back@main@20260101000000+0000.mp4"], captured
-+        )
++        await self._run_move_files(["back@main@20260101000000+0000.mp4"], captured)
 +        self.assertEqual(len(captured), 1)
 +        self.assertEqual(captured[0]["stream_quality"], "main")
 +
 +    async def test_move_files_parses_substream_filename_default_sub(self):
 +        captured = []
-+        await self._run_move_files(
-+            ["back@20260101000000+0000.mp4"], captured
-+        )
++        await self._run_move_files(["back@20260101000000+0000.mp4"], captured)
 +        self.assertEqual(len(captured), 1)
 +        self.assertEqual(captured[0]["stream_quality"], "sub")
 +
@@ -3594,7 +3561,8 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +        quality ``sub`` (M5 fix)."""
 +        captured = []
 +        await self._run_move_files(
-+            ["back@foo@bar@20260101000000+0000.mp4"], captured,
++            ["back@foo@bar@20260101000000+0000.mp4"],
++            captured,
 +        )
 +        # Camera was recognised under the at-bearing name.
 +        self.assertEqual(len(captured), 1)
@@ -3605,7 +3573,8 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +        (``<camera>@main@<ts>.mp4``). Camera name is ``back@foo``."""
 +        captured = []
 +        await self._run_move_files(
-+            ["back@foo@main@20260101000000+0000.mp4"], captured,
++            ["back@foo@main@20260101000000+0000.mp4"],
++            captured,
 +        )
 +        self.assertEqual(len(captured), 1)
 +        self.assertEqual(captured[0]["stream_quality"], "main")
@@ -3626,7 +3595,7 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +        maintainer.recordings_publisher = MagicMock()
 +        maintainer.move_segment = AsyncMock(return_value=None)
 +
-+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
++        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
 +        cache_path = "/tmp/back@main@20260101000000+0000.mp4"
 +        # prime end_time_cache so we don't probe with ffprobe
 +        maintainer.end_time_cache[cache_path] = (
@@ -3669,9 +3638,7 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +        fake_seg_info.motion_heatmap = None
 +        maintainer.segment_stats = MagicMock(return_value=fake_seg_info)
 +
-+        start = datetime.datetime(
-+            2026, 1, 1, 12, 34, 56, tzinfo=datetime.timezone.utc
-+        )
++        start = datetime.datetime(2026, 1, 1, 12, 34, 56, tzinfo=datetime.UTC)
 +        end = start + datetime.timedelta(seconds=10)
 +        cache_path = os.path.join(tmpdir, "cache_input.mp4")
 +        # create the source file so getsize works
@@ -3693,15 +3660,22 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +            p.stderr = None
 +            return p
 +
-+        with patch(
-+            "frigate.record.maintainer.asyncio.create_subprocess_exec",
-+            side_effect=fake_create_subprocess_exec,
-+        ), patch("frigate.record.maintainer.RECORD_DIR", tmpdir), patch(
-+            "frigate.record.maintainer.os.remove"
++        with (
++            patch(
++                "frigate.record.maintainer.asyncio.create_subprocess_exec",
++                side_effect=fake_create_subprocess_exec,
++            ),
++            patch("frigate.record.maintainer.RECORD_DIR", tmpdir),
++            patch("frigate.record.maintainer.os.remove"),
 +        ):
 +            result = await maintainer.move_segment(
-+                "back", start, end, 10.0, cache_path,
-+                fake_seg_info, stream_quality,
++                "back",
++                start,
++                end,
++                10.0,
++                cache_path,
++                fake_seg_info,
++                stream_quality,
 +            )
 +
 +        return result, captured_paths
@@ -3771,26 +3745,22 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +            cache_path = os.path.join(tmpdir, cache_file)
 +            with open(cache_path, "wb") as f:
 +                f.write(b"\x00" * 1024)
-+            start = datetime.datetime(
-+                2026, 1, 1, tzinfo=datetime.timezone.utc
-+            )
++            start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
 +            maintainer.end_time_cache[cache_path] = (
 +                start + datetime.timedelta(seconds=10),
 +                10.0,
 +            )
 +
-+            with patch(
-+                "frigate.record.maintainer.CACHE_DIR", tmpdir
-+            ), patch(
-+                "frigate.record.maintainer.os.listdir",
-+                return_value=[cache_file],
-+            ), patch(
-+                "frigate.record.maintainer.os.path.isfile", return_value=True
-+            ), patch(
-+                "frigate.record.maintainer.psutil.process_iter", return_value=[]
-+            ), patch(
-+                "frigate.record.maintainer.ReviewSegment"
-+            ) as mock_rs:
++            with (
++                patch("frigate.record.maintainer.CACHE_DIR", tmpdir),
++                patch(
++                    "frigate.record.maintainer.os.listdir",
++                    return_value=[cache_file],
++                ),
++                patch("frigate.record.maintainer.os.path.isfile", return_value=True),
++                patch("frigate.record.maintainer.psutil.process_iter", return_value=[]),
++                patch("frigate.record.maintainer.ReviewSegment") as mock_rs,
++            ):
 +                mock_rs.select.return_value.where.return_value.order_by.return_value = []
 +                mock_rs.end_time = ReviewSegment.end_time
 +                await maintainer.move_files()
@@ -3855,10 +3825,10 @@ index 0000000000000000000000000000000000000000..66adf6c7fbe3b650502d23281583499d
 +    unittest.main()
 diff --git a/frigate/test/test_retention_dual_stream.py b/frigate/test/test_retention_dual_stream.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a1dcb42d6
+index 0000000000000000000000000000000000000000..ff489335aa69642c7894cb38fc75edc6c5fd4f6d
 --- /dev/null
 +++ b/frigate/test/test_retention_dual_stream.py
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,525 @@
 +"""Unit tests for retention behaviour in the presence of main-stream segments.
 +
 +These tests exercise the two independent passes inside
@@ -3888,7 +3858,6 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +from frigate.config import RetainModeEnum
 +from frigate.models import Previews, Recordings, ReviewSegment, UserReviewStatus
 +from frigate.record.cleanup import RecordingCleanup
-+
 +
 +DAY = 24 * 60 * 60
 +
@@ -3944,14 +3913,10 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +    )
 +
 +    def _get_review_pre_capture(severity):
-+        return (
-+            alerts.pre_capture if severity == "alert" else detections.pre_capture
-+        )
++        return alerts.pre_capture if severity == "alert" else detections.pre_capture
 +
 +    def _get_review_post_capture(severity):
-+        return (
-+            alerts.post_capture if severity == "alert" else detections.post_capture
-+        )
++        return alerts.post_capture if severity == "alert" else detections.post_capture
 +
 +    record.get_review_pre_capture = _get_review_pre_capture
 +    record.get_review_post_capture = _get_review_post_capture
@@ -4034,9 +3999,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        return os.path.exists(path)
 +
 +    def _row_exists(self, rec_id: str) -> bool:
-+        return (
-+            Recordings.select().where(Recordings.id == rec_id).count() > 0
-+        )
++        return Recordings.select().where(Recordings.id == rec_id).count() > 0
 +
 +
 +# =====================================================================
@@ -4052,9 +4015,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        main_path = self._seed("main_old", "back", "main", old)
 +
 +        cfg = _make_camera_config(continuous_days=1, motion_days=1)
-+        continuous_expire = (
-+            self.now - datetime.timedelta(days=1)
-+        ).timestamp()
++        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
 +        motion_expire = continuous_expire
 +
 +        self.cleanup.expire_existing_camera_recordings(
@@ -4108,12 +4069,8 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +# =====================================================================
 +class TestMainRetainModes(_DualStreamRetentionBase):
 +    def test_main_motion_mode_keeps_rows_with_motion(self):
-+        with_motion = self._seed(
-+            "main_motion", "back", "main", 30 * DAY, motion=1
-+        )
-+        with_dbfs = self._seed(
-+            "main_audio", "back", "main", 30 * DAY, dBFS=3
-+        )
++        with_motion = self._seed("main_motion", "back", "main", 30 * DAY, motion=1)
++        with_dbfs = self._seed("main_audio", "back", "main", 30 * DAY, dBFS=3)
 +        silent = self._seed("main_silent", "back", "main", 30 * DAY)
 +
 +        cfg = _make_camera_config(
@@ -4142,12 +4099,8 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        self.assertTrue(self._exists(young_silent))
 +
 +    def test_main_active_objects_mode_only_keeps_rows_with_objects(self):
-+        with_obj = self._seed(
-+            "main_obj", "back", "main", 30 * DAY, objects=1, motion=1
-+        )
-+        motion_only = self._seed(
-+            "main_motion_only", "back", "main", 30 * DAY, motion=1
-+        )
++        with_obj = self._seed("main_obj", "back", "main", 30 * DAY, objects=1, motion=1)
++        motion_only = self._seed("main_motion_only", "back", "main", 30 * DAY, motion=1)
 +
 +        cfg = _make_camera_config(
 +            event_retain_days=7,
@@ -4176,9 +4129,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +            "main_drop", "back", "main", 5 * DAY
 +        )  # older than 3-day fallback
 +
-+        cfg = _make_camera_config(
-+            event_retain_days=0, continuous_days=3, motion_days=1
-+        )
++        cfg = _make_camera_config(event_retain_days=0, continuous_days=3, motion_days=1)
 +        self.cleanup.expire_existing_camera_main_recordings(cfg, self.now)
 +
 +        self.assertTrue(self._row_exists("main_keep"))
@@ -4270,9 +4221,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        self.assertTrue(self._row_exists("sub_old"))
 +        self.assertTrue(self._exists(sub_path))
 +
-+        continuous_expire = (
-+            self.now - datetime.timedelta(days=1)
-+        ).timestamp()
++        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
 +        self.cleanup.expire_existing_camera_recordings(
 +            continuous_expire, continuous_expire, cfg, reviews=[]
 +        )
@@ -4301,9 +4250,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +            motion_days=1,
 +        )
 +
-+        continuous_expire = (
-+            self.now - datetime.timedelta(days=1)
-+        ).timestamp()
++        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
 +
 +        # run sub pass then main pass
 +        self.cleanup.expire_existing_camera_recordings(
@@ -4345,9 +4292,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        old_path = self._seed("main_old", "back", "main", old, motion=1)
 +        young_path = self._seed("main_young", "back", "main", young, motion=1)
 +
-+        cfg = _make_camera_config(
-+            event_retain_days=0, continuous_days=3, motion_days=3
-+        )
++        cfg = _make_camera_config(event_retain_days=0, continuous_days=3, motion_days=3)
 +        self.cleanup.expire_existing_camera_main_recordings(cfg, self.now)
 +
 +        # 3-day fallback drops the 30-day-old row but keeps the 1-day-old row
@@ -4371,12 +4316,8 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        """
 +        old_path = self._seed("main_old", "back", "main", 30 * DAY)
 +
-+        cfg = _make_camera_config(
-+            event_retain_days=0, continuous_days=0, motion_days=0
-+        )
-+        result = self.cleanup.expire_existing_camera_main_recordings(
-+            cfg, self.now
-+        )
++        cfg = _make_camera_config(event_retain_days=0, continuous_days=0, motion_days=0)
++        result = self.cleanup.expire_existing_camera_main_recordings(cfg, self.now)
 +
 +        self.assertEqual(result, set())
 +        self.assertTrue(self._row_exists("main_old"))
@@ -4398,9 +4339,7 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +        cfg = _make_camera_config(
 +            continuous_days=1, motion_days=1, event_retain_days=30
 +        )
-+        continuous_expire = (
-+            self.now - datetime.timedelta(days=1)
-+        ).timestamp()
++        continuous_expire = (self.now - datetime.timedelta(days=1)).timestamp()
 +        motion_expire = continuous_expire
 +
 +        # Run the sub expire pass -- it should NOT touch main rows.
@@ -4416,10 +4355,10 @@ index 0000000000000000000000000000000000000000..9a002e79f554ff2fed2a8bdf07c6df5a
 +if __name__ == "__main__":
 +    unittest.main()
 diff --git a/frigate/video/ffmpeg.py b/frigate/video/ffmpeg.py
-index 67c0ac0e5d4e5c42826cb9700fbc0a1adfa76881..003d1a046bab0dcc253d3b17d44bcd9b716f914c 100644
+index 67c0ac0e5d4e5c42826cb9700fbc0a1adfa76881..d09e004f0d21692c8ae19e92fdfc5aea6448c2cc 100644
 --- a/frigate/video/ffmpeg.py
 +++ b/frigate/video/ffmpeg.py
-@@ -504,11 +504,65 @@ class CameraWatchdog(threading.Thread):
+@@ -504,11 +504,63 @@ class CameraWatchdog(threading.Thread):
                          p["latest_segment_time"] = self.latest_cache_segment_time
  
                  if poll is None:
@@ -4459,9 +4398,7 @@ index 67c0ac0e5d4e5c42826cb9700fbc0a1adfa76881..003d1a046bab0dcc253d3b17d44bcd9b
 +                    if cur_backoff > 0 and (now - last) < cur_backoff:
 +                        continue
 +
-+                    next_backoff = (
-+                        1 if cur_backoff <= 0 else min(cur_backoff * 2, 60)
-+                    )
++                    next_backoff = 1 if cur_backoff <= 0 else min(cur_backoff * 2, 60)
 +                    p["_backoff_seconds"] = next_backoff
 +                    p["_last_restart_at"] = now
 +                    p["_backoff_started_at"] = now
@@ -4577,7 +4514,7 @@ index 0000000000000000000000000000000000000000..8211acf3c539eef26df6c0c005614ad6
 +    pass
 diff --git a/web/e2e/specs/dual-stream.spec.ts b/web/e2e/specs/dual-stream.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..fc9c7b9b4191d0b97abee5660fa7eae98b7c7b78
+index 0000000000000000000000000000000000000000..19964c874d301dbe372760046da825b69fe6209d
 --- /dev/null
 +++ b/web/e2e/specs/dual-stream.spec.ts
 @@ -0,0 +1,73 @@
@@ -4598,7 +4535,7 @@ index 0000000000000000000000000000000000000000..fc9c7b9b4191d0b97abee5660fa7eae9
 +  );
 +}
 +
-+test.describe("Dual-stream release bench @critical", () => {
++test.describe("Dual-stream release bench @critical @mobile", () => {
 +  test("live view selects HD and switches back to SD", async ({ frigateApp }) => {
 +    await configureDualStream(frigateApp);
 +    await frigateApp.goto("/#front_door");
