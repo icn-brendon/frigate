@@ -737,6 +737,7 @@ async def vod_ts(
 
 @router.get(
     "/vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}",
+    operation_id="vod_ts_quality",
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.",
 )

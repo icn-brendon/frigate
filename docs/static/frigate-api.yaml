@@ -5820,8 +5820,7 @@ paths:
         **Access:** Authenticated user with access to the referenced camera.
 
         Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.
-      operationId: 
-        vod_ts_with_quality_vod__camera_name__start__start_ts__end__end_ts__quality__quality__get
+      operationId: vod_ts_quality
       parameters:
         - name: camera_name
           in: path
@@ -7086,8 +7085,7 @@ paths:
         Bounded by a maximum time window and a maximum row count (M6). Responses
         include a ``truncated`` flag so clients can detect when the row cap was
         hit and narrow their window.
-      operationId: 
-        main_stream_availability__camera_name__recordings_main_availability_get
+      operationId: main_stream_availability
       parameters:
         - name: camera_name
           in: path

@@ -6,6 +6,7 @@ COPY web/patches/ patches/
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run e2e:build
+RUN mkdir -p node_modules/.vite-temp && chown 1000:1000 node_modules/.vite-temp
 ENV CI=1 HOME=/tmp
 USER 1000:1000
 CMD ["npx", "playwright", "test", "--config", "e2e/playwright.config.ts", "dual-stream.spec.ts", "--reporter=list", "--output=/tmp/test-results"]
