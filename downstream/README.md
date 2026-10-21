@@ -34,7 +34,7 @@ Commit the integrated code in the new worktree, then refresh the portable patch:
 
 ```sh
 python3 downstream/update.py export-patch
-git add downstream/dual-stream.patch
+git add downstream/dual-stream.patch downstream/feature-files.json
 git commit -m "Refresh dual-stream patch for upstream release"
 git push -u origin HEAD
 ```
@@ -98,7 +98,7 @@ Use `downstream/live_uat.py` from an isolated LAN-enabled container for the API,
 recording and media checks. UI and camera-trigger checks need their own evidence.
 Do not report complete UAT if a camera event or browser flow was not exercised.
 
-The live checks are supplied as three reusable scripts:
+The live checks are supplied as four reusable scripts:
 
 - `live_uat.py --url URL --version-prefix 0.18.2 --cameras Front_Gate Front_Driveway`
   checks processing, quality tags, VOD metadata and fresh SD. Add
@@ -110,6 +110,15 @@ The live checks are supplied as three reusable scripts:
 - `live_media_uat.py --url URL --cameras Front_Gate Front_Driveway` probes and
   decodes real HLS samples using FFmpeg inside the disposable ROCm bench image.
   Add `--exports` to create, verify and delete this run's short HD/SD exports.
+- `live_relay_uat.py --url URL/api/webrtc --origin https://home.saxon.email
+  --streams Front_Gate Front_Driveway Front_Gate_HD Front_Driveway_HD` receives
+  and decodes real H.264 WebRTC frames through the Home Assistant adapter.
+  Build `downstream/Dockerfile.relay-test` and stream this script to its stdin,
+  passing the arguments after the image name. Run with a read-only root,
+  temporary `/tmp`, dropped capabilities and LAN networking. The client needs
+  access to the SDP endpoint and the relay's advertised UDP candidate. An SSH
+  tunnel forwards signaling only. The pinned aiortc client uses a larger receive
+  buffer for HD I-frames. Recheck its private buffer API when upgrading aiortc.
 
 These scripts do not need production filesystem mounts or copied credentials.
 On nas01, a disposable container can reach `http://frigate-uat:5000` on the
@@ -123,6 +132,36 @@ health alone does not prove detection is ready. First compilation can take
 several minutes and briefly produce cache-backlog warnings. Record both startup
 and settled results. Pre-pull the candidate digest with the NAS's registry access
 before updating Portainer; `pull_policy: always` can override its no-pull option.
+
+## Home Assistant relay after container replacement
+
+The relay shares Frigate's network namespace. Replacing Frigate leaves an
+existing relay attached to the old container ID. Recreate the relay through its
+Portainer stack after each Frigate replacement and confirm its network mode
+references the current Frigate container. Restarting the old relay alone does
+not update that namespace reference.
+
+On nas01, native go2rtc must use WebRTC port 18555 and advertise
+`10.0.0.70:18555`; the Home Assistant relay owns 8555. Persist this in the managed
+Frigate config:
+
+```yaml
+go2rtc:
+  webrtc:
+    listen: ":18555"
+    candidates: ["10.0.0.70:18555"]
+```
+
+Keep the existing go2rtc streams alongside those settings. Native RTSP remains
+8554 and its API remains 1984. The relay API is 1985. Successful SDP signaling or
+a healthy container does not prove video arrives. Require decoded SD and HD
+frames through the adapter before accepting the update.
+
+Preflight the relay stack's Git credential before the maintenance window. On
+21 October its stored credential could not fetch the private repository. The
+deployment used an exact-spec relay recreation instead. Repair that credential
+before relying on automatic Git redeploy; never substitute an unrelated broad
+GitHub token silently.
 
 Rollback through Portainer to the recorded old image. If migrations changed the
 schema incompatibly, restore the matching consistent database and config backup
