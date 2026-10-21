@@ -10,6 +10,9 @@ async function configureDualStream(app: FrigateApp) {
   await app.page.route("**/api/config", (route) =>
     route.fulfill({ json: config }),
   );
+  await app.page.route("**/api/go2rtc/streams/front_door_main", (route) =>
+    route.fulfill({ json: { producers: [], consumers: [] } }),
+  );
 }
 
 test.describe("Dual-stream release bench @critical", () => {
@@ -20,7 +23,11 @@ test.describe("Dual-stream release bench @critical", () => {
       name: "Toggle live stream quality",
     });
     await expect(toggle).toHaveText("SD");
+    const mainStreamRequest = frigateApp.page.waitForRequest(
+      "**/api/go2rtc/streams/front_door_main",
+    );
     await toggle.click();
+    await mainStreamRequest;
     await expect(toggle).toHaveText("HD");
     await toggle.click();
     await expect(toggle).toHaveText("SD");

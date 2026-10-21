@@ -2,6 +2,7 @@
 """Prepare an upstream release with the portable dual-stream patch."""
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -10,11 +11,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FEATURE_PATHS = [
+    ".dockerignore",
     "frigate",
     "migrations",
     "web",
     "docker/main/build_nginx.sh",
     "docker/main/rootfs/usr/local/go2rtc/create_config.py",
+    "docs/static/frigate-api.yaml",
 ]
 INTEGRATION_PATHS = [
     "downstream",
@@ -36,6 +39,12 @@ def export_patch(ref: str) -> None:
          "--", *FEATURE_PATHS], cwd=ROOT,
     )
     (ROOT / "downstream/dual-stream.patch").write_bytes(diff)
+    changed = git("diff", "--name-only", release["upstream_commit"], ref, "--", *FEATURE_PATHS).splitlines()
+    files = {}
+    for name in changed:
+        content = subprocess.run(["git", "show", f"{ref}:{name}"], cwd=ROOT, capture_output=True, check=False)
+        files[name] = hashlib.sha256(content.stdout).hexdigest() if content.returncode == 0 else None
+    (ROOT / "downstream/feature-files.json").write_text(json.dumps(files, indent=2, sort_keys=True) + "\n")
     print(f"Exported {len(diff)} bytes against {release['upstream_tag']}")
 
 

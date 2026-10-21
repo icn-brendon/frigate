@@ -40,7 +40,7 @@ git push -u origin HEAD
 ```
 
 The `Dual-stream release bench` workflow runs automatically on downstream/update
-branches. Only a candidate that passes both benches is published to GHCR under
+branches. Only a candidate that passes patch replay, backend and browser benches is published to GHCR under
 an immutable commit-based tag. Source and runtime versions must match; never
 build the overlay on a moving `stable-rocm` tag. Open a PR with test results,
 candidate digest, UAT evidence and rollback reference.

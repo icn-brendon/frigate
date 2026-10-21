@@ -5789,6 +5789,66 @@ paths:
             type: boolean
             default: false
             title: Force Discontinuity
+        - name: stream_quality
+          in: query
+          required: false
+          schema:
+            type: string
+            default: sub
+            title: Stream Quality
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - frigateUserAuth: []
+      x-required-role: camera
+  /vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}:
+    get:
+      tags:
+        - Media
+      summary: Vod Ts With Quality
+      description: |-
+        **Access:** Authenticated user with access to the referenced camera.
+
+        Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.
+      operationId: 
+        vod_ts_with_quality_vod__camera_name__start__start_ts__end__end_ts__quality__quality__get
+      parameters:
+        - name: camera_name
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            title: Camera Name
+        - name: start_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: Start Ts
+        - name: end_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: End Ts
+        - name: quality
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Quality
       responses:
         '200':
           description: Successful Response
@@ -5901,6 +5961,15 @@ paths:
           schema:
             type: string
             title: Tz Name
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            description: 'Stream quality: sub or main'
+            default: sub
+            title: Quality
+          description: 'Stream quality: sub or main'
       responses:
         '200':
           description: Successful Response
@@ -5989,6 +6058,15 @@ paths:
           schema:
             type: number
             title: End Ts
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            description: 'Stream quality: sub or main'
+            default: sub
+            title: Quality
+          description: 'Stream quality: sub or main'
       responses:
         '200':
           description: Successful Response
@@ -6973,6 +7051,64 @@ paths:
           schema:
             type: number
             title: Before
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            default: sub
+            title: Quality
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - frigateUserAuth: []
+      x-required-role: camera
+  /{camera_name}/recordings/main_availability:
+    get:
+      tags:
+        - Recordings
+      summary: Main Stream Availability
+      description: |-
+        **Access:** Authenticated user with access to the referenced camera.
+
+        Return time ranges where main stream recordings are available.
+
+        Bounded by a maximum time window and a maximum row count (M6). Responses
+        include a ``truncated`` flag so clients can detect when the row cap was
+        hit and narrow their window.
+      operationId: 
+        main_stream_availability__camera_name__recordings_main_availability_get
+      parameters:
+        - name: camera_name
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            title: Camera Name
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: number
+            title: After
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: number
+            title: Before
       responses:
         '200':
           description: Successful Response
@@ -7380,6 +7516,12 @@ components:
             - type: 'null'
           title: Client item ID
           description: Optional opaque client identifier echoed back in results
+        quality:
+          $ref: '#/components/schemas/ExportQualityEnum'
+          title: Stream quality
+          description: 'Recording stream quality to export: auto prefers HD (main)
+            footage when it covers the range, falling back to sub.'
+          default: auto
       type: object
       required:
         - camera
@@ -8201,6 +8343,19 @@ components:
         - in_progress
       title: ExportModel
       description: Model representing a single export.
+    ExportQualityEnum:
+      type: string
+      enum:
+        - auto
+        - main
+        - sub
+      title: ExportQualityEnum
+      description: |-
+        Which recording stream quality an export should use.
+
+        auto: prefer the HD (main) event stream when any main-quality footage
+        overlaps the requested range, otherwise fall back to the continuous
+        sub stream. main/sub force that quality explicitly.
     ExportRecordingsBody:
       properties:
         source:
@@ -8223,6 +8378,12 @@ components:
             - type: 'null'
           title: Export case ID
           description: ID of the export case to assign this export to
+        quality:
+          $ref: '#/components/schemas/ExportQualityEnum'
+          title: Stream quality
+          description: 'Recording stream quality to export: auto prefers HD (main)
+            footage when it covers the range, falling back to sub.'
+          default: auto
         chapters:
           anyOf:
             - $ref: '#/components/schemas/ChaptersEnum'
@@ -8252,6 +8413,12 @@ components:
             - type: 'null'
           title: Export case ID
           description: ID of the export case to assign this export to
+        quality:
+          $ref: '#/components/schemas/ExportQualityEnum'
+          title: Stream quality
+          description: 'Recording stream quality to export: auto prefers HD (main)
+            footage when it covers the range, falling back to sub.'
+          default: auto
         ffmpeg_input_args:
           anyOf:
             - type: string

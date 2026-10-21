@@ -49,7 +49,7 @@ def main() -> None:
             if quality == "main" and args.require_main_since is not None:
                 assert newest["start_time"] >= args.require_main_since, f"{name}: no new HD event recorded"
             result[quality] = {"segments": len(rows), "latest_end": newest["end_time"]}
-            start, end = int(newest["start_time"]) + 1, int(newest["end_time"]) - 1
+            start, end = int(newest["start_time"]), int(newest["end_time"])
             assert end > start, f"{name}: latest {quality} segment too short"
             vod = get(f"/api/vod/{name}/start/{start}/end/{end}/quality/{quality}")
             assert vod.get("sequences"), f"{name}: {quality} VOD has no sequences"

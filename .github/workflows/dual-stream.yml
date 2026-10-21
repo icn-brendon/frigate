@@ -21,6 +21,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export clean upstream fixture
+        run: git archive -o upstream.tar "$(jq -r .upstream_commit downstream/release.json)" frigate migrations web docker/main docs/static/frigate-api.yaml .dockerignore
+      - name: Build patch replay bench
+        run: docker build -f downstream/Dockerfile.patch-test -t dual-stream-patch-test .
+      - name: Prove the portable patch matches this release
+        run: >-
+          docker run --rm --read-only --network none --cap-drop ALL
+          --security-opt no-new-privileges --pids-limit 128 --memory 1g
+          --tmpfs /tmp:rw,uid=1000,gid=1000,size=768m dual-stream-patch-test
+
   backend:
     runs-on: ubuntu-24.04
     steps:
@@ -55,7 +72,7 @@ jobs:
           --ipc private --shm-size 1g dual-stream-web-test
 
   image:
-    needs: [backend, frontend]
+    needs: [patch, backend, frontend]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:

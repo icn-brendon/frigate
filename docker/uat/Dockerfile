@@ -16,6 +16,7 @@ ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:0.18.2-rocm@sha256:d659f0967627e7
 # ---------------------------------------------------------------------------
 FROM node:24.14.0-bookworm-slim AS web-build
 WORKDIR /work
+ENV NODE_OPTIONS=--max-old-space-size=4096
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
