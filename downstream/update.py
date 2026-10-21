@@ -35,16 +35,35 @@ def export_patch(ref: str) -> None:
     """Export application changes separately from update/build tooling."""
     release = json.loads((ROOT / "downstream/release.json").read_text())
     diff = subprocess.check_output(
-        ["git", "diff", "--binary", "--full-index", release["upstream_commit"], ref,
-         "--", *FEATURE_PATHS], cwd=ROOT,
+        [
+            "git",
+            "diff",
+            "--binary",
+            "--full-index",
+            release["upstream_commit"],
+            ref,
+            "--",
+            *FEATURE_PATHS,
+        ],
+        cwd=ROOT,
     )
     (ROOT / "downstream/dual-stream.patch").write_bytes(diff)
-    changed = git("diff", "--name-only", release["upstream_commit"], ref, "--", *FEATURE_PATHS).splitlines()
+    changed = git(
+        "diff", "--name-only", release["upstream_commit"], ref, "--", *FEATURE_PATHS
+    ).splitlines()
     files = {}
     for name in changed:
-        content = subprocess.run(["git", "show", f"{ref}:{name}"], cwd=ROOT, capture_output=True, check=False)
-        files[name] = hashlib.sha256(content.stdout).hexdigest() if content.returncode == 0 else None
-    (ROOT / "downstream/feature-files.json").write_text(json.dumps(files, indent=2, sort_keys=True) + "\n")
+        content = subprocess.run(
+            ["git", "show", f"{ref}:{name}"], cwd=ROOT, capture_output=True, check=False
+        )
+        files[name] = (
+            hashlib.sha256(content.stdout).hexdigest()
+            if content.returncode == 0
+            else None
+        )
+    (ROOT / "downstream/feature-files.json").write_text(
+        json.dumps(files, indent=2, sort_keys=True) + "\n"
+    )
     print(f"Exported {len(diff)} bytes against {release['upstream_tag']}")
 
 
@@ -55,18 +74,32 @@ def prepare(tag: str, directory: Path, image: str) -> None:
     if git("status", "--porcelain"):
         raise SystemExit("Commit the patch and tooling before preparing an update")
     subprocess.run(
-        ["git", "fetch", "https://github.com/blakeblackshear/frigate.git",
-         f"refs/tags/{tag}:refs/tags/{tag}"], cwd=ROOT, check=True,
+        [
+            "git",
+            "fetch",
+            "https://github.com/blakeblackshear/frigate.git",
+            f"refs/tags/{tag}:refs/tags/{tag}",
+        ],
+        cwd=ROOT,
+        check=True,
     )
     commit = git("rev-parse", f"{tag}^{{commit}}")
     directory = directory.resolve()
     subprocess.run(
         ["git", "worktree", "add", "-b", f"downstream/{tag}", str(directory), commit],
-        cwd=ROOT, check=True,
+        cwd=ROOT,
+        check=True,
     )
     result = subprocess.run(
-        ["git", "apply", "--3way", "--index", str(ROOT / "downstream/dual-stream.patch")],
-        cwd=directory, check=False,
+        [
+            "git",
+            "apply",
+            "--3way",
+            "--index",
+            str(ROOT / "downstream/dual-stream.patch"),
+        ],
+        cwd=directory,
+        check=False,
     )
     # Copy process files even on conflict, so the resolution worktree has its runbook.
     for name in INTEGRATION_PATHS:
@@ -77,13 +110,23 @@ def prepare(tag: str, directory: Path, image: str) -> None:
         else:
             shutil.copy2(source, target)
     release = {"upstream_tag": tag, "upstream_commit": commit, "base_image": image}
-    (directory / "downstream/release.json").write_text(json.dumps(release, indent=2) + "\n")
+    (directory / "downstream/release.json").write_text(
+        json.dumps(release, indent=2) + "\n"
+    )
     for name in ["docker/uat/Dockerfile", "downstream/Dockerfile.test"]:
         path = directory / name
-        path.write_text(re.sub(r"(?m)^ARG BASE_IMAGE=.*$", f"ARG BASE_IMAGE={image}", path.read_text()))
+        path.write_text(
+            re.sub(
+                r"(?m)^ARG BASE_IMAGE=.*$", f"ARG BASE_IMAGE={image}", path.read_text()
+            )
+        )
     if result.returncode:
-        raise SystemExit(f"Patch conflicts in {directory}. Resolve them, test, then re-export the patch")
-    print(f"Prepared {directory} at {tag}. Review and commit, then export-patch and run CI")
+        raise SystemExit(
+            f"Patch conflicts in {directory}. Resolve them, test, then re-export the patch"
+        )
+    print(
+        f"Prepared {directory} at {tag}. Review and commit, then export-patch and run CI"
+    )
 
 
 def main() -> None:
@@ -95,14 +138,25 @@ def main() -> None:
     new = sub.add_parser("prepare")
     new.add_argument("tag")
     new.add_argument("directory", type=Path)
-    new.add_argument("--base-image", required=True, help="Matching upstream ROCm image pinned by digest")
+    new.add_argument(
+        "--base-image",
+        required=True,
+        help="Matching upstream ROCm image pinned by digest",
+    )
     args = parser.parse_args()
     if args.command == "export-patch":
         export_patch(args.ref)
     else:
-        if not re.fullmatch(r"ghcr\.io/blakeblackshear/frigate:[A-Za-z0-9.-]+-rocm@sha256:[a-f0-9]{64}", args.base_image):
-            raise SystemExit("Pin the upstream ROCm image by release tag and sha256 digest")
-        if args.base_image.split(":", 1)[1].split("-rocm@", 1)[0] != args.tag.removeprefix("v"):
+        if not re.fullmatch(
+            r"ghcr\.io/blakeblackshear/frigate:[A-Za-z0-9.-]+-rocm@sha256:[a-f0-9]{64}",
+            args.base_image,
+        ):
+            raise SystemExit(
+                "Pin the upstream ROCm image by release tag and sha256 digest"
+            )
+        if args.base_image.split(":", 1)[1].split("-rocm@", 1)[
+            0
+        ] != args.tag.removeprefix("v"):
             raise SystemExit("The source release and image release must match")
         prepare(args.tag, args.directory, args.base_image)
 

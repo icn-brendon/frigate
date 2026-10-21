@@ -23,16 +23,34 @@ def main() -> None:
             archive.extractall(root, filter="data")
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         subprocess.run(["git", "add", "."], cwd=root, check=True)
-        subprocess.run(["git", "-c", "user.name=Patch bench", "-c", "user.email=bench@example.invalid",
-                        "commit", "-qm", "Clean upstream fixture"], cwd=root, check=True)
-        subprocess.run(["git", "apply", "--3way", "--index", str(bundle / "dual-stream.patch")], cwd=root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Patch bench",
+                "-c",
+                "user.email=bench@example.invalid",
+                "commit",
+                "-qm",
+                "Clean upstream fixture",
+            ],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "apply", "--3way", "--index", str(bundle / "dual-stream.patch")],
+            cwd=root,
+            check=True,
+        )
         files = json.loads((bundle / "feature-files.json").read_text())
         for name, digest in files.items():
             path = root / name
             if digest is None:
                 assert not path.exists(), f"Patch did not delete {name}"
             else:
-                assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, f"Patch differs at {name}"
+                assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, (
+                    f"Patch differs at {name}"
+                )
         print(f"PASS: portable patch reconstructs all {len(files)} feature files")
 
 

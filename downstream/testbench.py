@@ -22,8 +22,15 @@ MODULES = [
 def main() -> int:
     """Isolate import mocks between modules and preserve every failed result."""
     failed = []
+    for command in [
+        ["ruff", "check", "downstream"],
+        ["ruff", "format", "--check", "downstream"],
+    ]:
+        if subprocess.run(command, check=False).returncode:
+            failed.append("process lint/format")
     result = subprocess.run(
-        [sys.executable, "generate_api_auth_spec.py", "--check"], check=False,
+        [sys.executable, "generate_api_auth_spec.py", "--check"],
+        check=False,
     )
     if result.returncode:
         failed.append("API schema")

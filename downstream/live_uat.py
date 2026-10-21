@@ -11,7 +11,11 @@ import urllib.request
 def main() -> None:
     """Check runtime configuration, processing and retained SD/HD footage."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True, help="Internal API URL reachable from the isolated bench")
+    parser.add_argument(
+        "--url",
+        required=True,
+        help="Internal API URL reachable from the isolated bench",
+    )
     parser.add_argument("--version-prefix", required=True)
     parser.add_argument("--cameras", nargs="+", required=True)
     parser.add_argument("--hours", type=float, default=24)
@@ -24,30 +28,52 @@ def main() -> None:
             return json.load(response)
 
     config, stats = get("/api/config"), get("/api/stats")
-    assert stats["service"]["version"].startswith(args.version_prefix), "Wrong candidate version"
+    assert stats["service"]["version"].startswith(args.version_prefix), (
+        "Wrong candidate version"
+    )
     assert "amd" in stats["detectors"], "AMD detector missing"
+    assert stats["detectors"]["amd"]["inference_speed"] > 0, "AMD detector is not ready"
     now = time.time()
-    report = {"version": stats["service"]["version"], "detectors": stats["detectors"], "cameras": {}}
+    report = {
+        "version": stats["service"]["version"],
+        "detectors": stats["detectors"],
+        "cameras": {},
+    }
     for name in args.cameras:
         camera, metrics = config["cameras"][name], stats["cameras"][name]
         roles = [set(item["roles"]) for item in camera["ffmpeg"]["inputs"]]
-        assert any("record_events" in item for item in roles), f"{name}: HD input missing"
-        assert all(not {"record", "record_events"}.issubset(item) for item in roles), name
-        assert camera["record"]["event_recording"]["enabled"], f"{name}: event recording disabled"
+        assert any("record_events" in item for item in roles), (
+            f"{name}: HD input missing"
+        )
+        assert all(not {"record", "record_events"}.issubset(item) for item in roles), (
+            name
+        )
+        assert camera["record"]["event_recording"]["enabled"], (
+            f"{name}: event recording disabled"
+        )
         assert camera["detect"]["fps"] == 5, f"{name}: detection FPS changed"
         assert metrics["process_fps"] >= 4.0, f"{name}: camera not processing"
         assert metrics["skipped_fps"] <= 0.2, f"{name}: sustained skipped frames"
-        result = {"process_fps": metrics["process_fps"], "skipped_fps": metrics["skipped_fps"]}
+        result = {
+            "process_fps": metrics["process_fps"],
+            "skipped_fps": metrics["skipped_fps"],
+        }
         for quality in ["sub", "main"]:
-            query = urllib.parse.urlencode({"after": now - args.hours * 3600, "before": now, "quality": quality})
+            query = urllib.parse.urlencode(
+                {"after": now - args.hours * 3600, "before": now, "quality": quality}
+            )
             rows = get(f"/api/{urllib.parse.quote(name)}/recordings?{query}")
             assert rows, f"{name}: no {quality} recordings in requested window"
-            assert all(row["stream_quality"] == quality for row in rows), f"{name}: mixed quality tags"
+            assert all(row["stream_quality"] == quality for row in rows), (
+                f"{name}: mixed quality tags"
+            )
             newest = max(rows, key=lambda row: row["end_time"])
             if quality == "sub":
                 assert newest["end_time"] > now - 120, f"{name}: SD recording stalled"
             if quality == "main" and args.require_main_since is not None:
-                assert newest["start_time"] >= args.require_main_since, f"{name}: no new HD event recorded"
+                assert newest["start_time"] >= args.require_main_since, (
+                    f"{name}: no new HD event recorded"
+                )
             result[quality] = {"segments": len(rows), "latest_end": newest["end_time"]}
             start, end = int(newest["start_time"]), int(newest["end_time"])
             assert end > start, f"{name}: latest {quality} segment too short"

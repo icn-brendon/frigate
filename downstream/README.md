@@ -98,6 +98,32 @@ Use `downstream/live_uat.py` from an isolated LAN-enabled container for the API,
 recording and media checks. UI and camera-trigger checks need their own evidence.
 Do not report complete UAT if a camera event or browser flow was not exercised.
 
+The live checks are supplied as three reusable scripts:
+
+- `live_uat.py --url URL --version-prefix 0.18.2 --cameras Front_Gate Front_Driveway`
+  checks processing, quality tags, VOD metadata and fresh SD. Add
+  `--require-main-since EPOCH` to require new HD after deployment.
+- `live_browser_uat.cjs URL Front_Gate Front_Driveway` runs desktop/mobile Live
+  and History controls against real APIs. Run with Node in the browser bench
+  image. It selects a known, closed HD range instead of assuming every timestamp
+  has HD footage. Mobile means an emulated layout, not physical Safari hardware.
+- `live_media_uat.py --url URL --cameras Front_Gate Front_Driveway` probes and
+  decodes real HLS samples using FFmpeg inside the disposable ROCm bench image.
+  Add `--exports` to create, verify and delete this run's short HD/SD exports.
+
+These scripts do not need production filesystem mounts or copied credentials.
+On nas01, a disposable container can reach `http://frigate-uat:5000` on the
+existing `traefik_proxy` network. Use dropped capabilities, no-new-privileges,
+memory/PID limits and a temporary `/tmp`. Stream the script to `python3 -` or
+`node -` to avoid mounting the host checkout. For a local browser bench, forward
+the internal UI through a localhost-only SSH tunnel and close it after testing.
+
+Wait for the AMD model to finish compiling before running acceptance. Container
+health alone does not prove detection is ready. First compilation can take
+several minutes and briefly produce cache-backlog warnings. Record both startup
+and settled results. Pre-pull the candidate digest with the NAS's registry access
+before updating Portainer; `pull_policy: always` can override its no-pull option.
+
 Rollback through Portainer to the recorded old image. If migrations changed the
 schema incompatibly, restore the matching consistent database and config backup
 before starting the old image. Keep the update branch and test report for review.

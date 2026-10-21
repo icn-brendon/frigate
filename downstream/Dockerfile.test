@@ -1,10 +1,12 @@
 ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:0.18.2-rocm@sha256:d659f0967627e7bd0b29c96bc396e436ce041aa40bf19e213f02bdade6092a83
 FROM ${BASE_IMAGE}
+RUN pip3 install --no-cache-dir ruff==0.15.20
 WORKDIR /opt/frigate
 COPY frigate/ frigate/
 COPY migrations/ migrations/
 COPY docker/main/rootfs/usr/local/go2rtc/create_config.py /usr/local/go2rtc/create_config.py
 COPY downstream/ downstream/
+COPY pyproject.toml ./
 COPY generate_api_auth_spec.py ./
 COPY docs/static/frigate-api.yaml docs/static/frigate-api.yaml
 RUN echo 'VERSION = "0.18.2-dual-stream-test"' > frigate/version.py
