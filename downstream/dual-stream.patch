@@ -1,3 +1,13 @@
+diff --git a/.dockerignore b/.dockerignore
+index b22b1b5365eeddf699951d2d433b0f921b15301e..1226dd898521fdfcce346f59b56827e5666985d3 100644
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -14,3 +14,5 @@ core
+ web/dist/
+ web/node_modules/
+ web/.npm
++
++!docs/static/frigate-api.yaml
 diff --git a/docker/main/build_nginx.sh b/docker/main/build_nginx.sh
 index 708a4cb45c738e57d92e5434a12ff4bf09f4325c..bcb9b2098a4a27c10603603d265a6d5d388694df 100755
 --- a/docker/main/build_nginx.sh
@@ -66,6 +76,233 @@ index 70cb744f135a33f73bd75ed9efe84d0ee524a6f6..9bb4b57de6172da40d97a096ce8c1dc5
  # add birdseye restream stream if enabled
  if config.get("birdseye", {}).get("restream", False):
      birdseye: dict[str, Any] = config.get("birdseye")
+diff --git a/docs/static/frigate-api.yaml b/docs/static/frigate-api.yaml
+index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d8116f9798f 100644
+--- a/docs/static/frigate-api.yaml
++++ b/docs/static/frigate-api.yaml
+@@ -5789,6 +5789,66 @@ paths:
+             type: boolean
+             default: false
+             title: Force Discontinuity
++        - name: stream_quality
++          in: query
++          required: false
++          schema:
++            type: string
++            default: sub
++            title: Stream Quality
++      responses:
++        '200':
++          description: Successful Response
++          content:
++            application/json:
++              schema: {}
++        '422':
++          description: Validation Error
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/HTTPValidationError'
++      security:
++        - frigateUserAuth: []
++      x-required-role: camera
++  /vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}:
++    get:
++      tags:
++        - Media
++      summary: Vod Ts With Quality
++      description: |-
++        **Access:** Authenticated user with access to the referenced camera.
++
++        Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.
++      operationId: 
++        vod_ts_with_quality_vod__camera_name__start__start_ts__end__end_ts__quality__quality__get
++      parameters:
++        - name: camera_name
++          in: path
++          required: true
++          schema:
++            anyOf:
++              - type: string
++              - type: 'null'
++            title: Camera Name
++        - name: start_ts
++          in: path
++          required: true
++          schema:
++            type: number
++            title: Start Ts
++        - name: end_ts
++          in: path
++          required: true
++          schema:
++            type: number
++            title: End Ts
++        - name: quality
++          in: path
++          required: true
++          schema:
++            type: string
++            title: Quality
+       responses:
+         '200':
+           description: Successful Response
+@@ -5901,6 +5961,15 @@ paths:
+           schema:
+             type: string
+             title: Tz Name
++        - name: quality
++          in: query
++          required: false
++          schema:
++            type: string
++            description: 'Stream quality: sub or main'
++            default: sub
++            title: Quality
++          description: 'Stream quality: sub or main'
+       responses:
+         '200':
+           description: Successful Response
+@@ -5989,6 +6058,15 @@ paths:
+           schema:
+             type: number
+             title: End Ts
++        - name: quality
++          in: query
++          required: false
++          schema:
++            type: string
++            description: 'Stream quality: sub or main'
++            default: sub
++            title: Quality
++          description: 'Stream quality: sub or main'
+       responses:
+         '200':
+           description: Successful Response
+@@ -6952,6 +7030,64 @@ paths:
+ 
+         Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used
+       operationId: recordings__camera_name__recordings_get
++      parameters:
++        - name: camera_name
++          in: path
++          required: true
++          schema:
++            anyOf:
++              - type: string
++              - type: 'null'
++            title: Camera Name
++        - name: after
++          in: query
++          required: false
++          schema:
++            type: number
++            title: After
++        - name: before
++          in: query
++          required: false
++          schema:
++            type: number
++            title: Before
++        - name: quality
++          in: query
++          required: false
++          schema:
++            type: string
++            default: sub
++            title: Quality
++      responses:
++        '200':
++          description: Successful Response
++          content:
++            application/json:
++              schema: {}
++        '422':
++          description: Validation Error
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/HTTPValidationError'
++      security:
++        - frigateUserAuth: []
++      x-required-role: camera
++  /{camera_name}/recordings/main_availability:
++    get:
++      tags:
++        - Recordings
++      summary: Main Stream Availability
++      description: |-
++        **Access:** Authenticated user with access to the referenced camera.
++
++        Return time ranges where main stream recordings are available.
++
++        Bounded by a maximum time window and a maximum row count (M6). Responses
++        include a ``truncated`` flag so clients can detect when the row cap was
++        hit and narrow their window.
++      operationId: 
++        main_stream_availability__camera_name__recordings_main_availability_get
+       parameters:
+         - name: camera_name
+           in: path
+@@ -7380,6 +7516,12 @@ components:
+             - type: 'null'
+           title: Client item ID
+           description: Optional opaque client identifier echoed back in results
++        quality:
++          $ref: '#/components/schemas/ExportQualityEnum'
++          title: Stream quality
++          description: 'Recording stream quality to export: auto prefers HD (main)
++            footage when it covers the range, falling back to sub.'
++          default: auto
+       type: object
+       required:
+         - camera
+@@ -8201,6 +8343,19 @@ components:
+         - in_progress
+       title: ExportModel
+       description: Model representing a single export.
++    ExportQualityEnum:
++      type: string
++      enum:
++        - auto
++        - main
++        - sub
++      title: ExportQualityEnum
++      description: |-
++        Which recording stream quality an export should use.
++
++        auto: prefer the HD (main) event stream when any main-quality footage
++        overlaps the requested range, otherwise fall back to the continuous
++        sub stream. main/sub force that quality explicitly.
+     ExportRecordingsBody:
+       properties:
+         source:
+@@ -8223,6 +8378,12 @@ components:
+             - type: 'null'
+           title: Export case ID
+           description: ID of the export case to assign this export to
++        quality:
++          $ref: '#/components/schemas/ExportQualityEnum'
++          title: Stream quality
++          description: 'Recording stream quality to export: auto prefers HD (main)
++            footage when it covers the range, falling back to sub.'
++          default: auto
+         chapters:
+           anyOf:
+             - $ref: '#/components/schemas/ChaptersEnum'
+@@ -8252,6 +8413,12 @@ components:
+             - type: 'null'
+           title: Export case ID
+           description: ID of the export case to assign this export to
++        quality:
++          $ref: '#/components/schemas/ExportQualityEnum'
++          title: Stream quality
++          description: 'Recording stream quality to export: auto prefers HD (main)
++            footage when it covers the range, falling back to sub.'
++          default: auto
+         ffmpeg_input_args:
+           anyOf:
+             - type: string
 diff --git a/frigate/api/defs/request/batch_export_body.py b/frigate/api/defs/request/batch_export_body.py
 index 24078bcc7cf2e078dc40f0a05f57fdd83a4a7ae4..6f4e60cecf0e2098329e92ab681649045286b3b2 100644
 --- a/frigate/api/defs/request/batch_export_body.py
@@ -4341,10 +4578,10 @@ index 0000000000000000000000000000000000000000..8211acf3c539eef26df6c0c005614ad6
 +    pass
 diff --git a/web/e2e/specs/dual-stream.spec.ts b/web/e2e/specs/dual-stream.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0c4f5fa8df5b9bde8d2e1ce978dccd2c62c8fa1
+index 0000000000000000000000000000000000000000..fc9c7b9b4191d0b97abee5660fa7eae98b7c7b78
 --- /dev/null
 +++ b/web/e2e/specs/dual-stream.spec.ts
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,73 @@
 +import { test, expect, type FrigateApp } from "../fixtures/frigate-test";
 +import { configFactory } from "../fixtures/mock-data/config";
 +
@@ -4357,6 +4594,9 @@ index 0000000000000000000000000000000000000000..b0c4f5fa8df5b9bde8d2e1ce978dccd2
 +  await app.page.route("**/api/config", (route) =>
 +    route.fulfill({ json: config }),
 +  );
++  await app.page.route("**/api/go2rtc/streams/front_door_main", (route) =>
++    route.fulfill({ json: { producers: [], consumers: [] } }),
++  );
 +}
 +
 +test.describe("Dual-stream release bench @critical", () => {
@@ -4367,7 +4607,11 @@ index 0000000000000000000000000000000000000000..b0c4f5fa8df5b9bde8d2e1ce978dccd2
 +      name: "Toggle live stream quality",
 +    });
 +    await expect(toggle).toHaveText("SD");
++    const mainStreamRequest = frigateApp.page.waitForRequest(
++      "**/api/go2rtc/streams/front_door_main",
++    );
 +    await toggle.click();
++    await mainStreamRequest;
 +    await expect(toggle).toHaveText("HD");
 +    await toggle.click();
 +    await expect(toggle).toHaveText("SD");
