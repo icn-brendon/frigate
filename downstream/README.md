@@ -89,6 +89,8 @@ detection rates and known Reolink software HEVC decode workaround. Verify:
    inspect database quality tags and probe actual files for both resolutions.
 4. Live HD/SD and History HD/SD controls work on desktop and mobile. HD gaps fall
    back appropriately in playback; no grey video or frozen player.
+   Run the sustained packet/presentation timing check as well. Average FPS and
+   one decoded frame do not establish smooth playback.
 5. Explore opens HD event clips; exports produce a playable HD file when present
    and SD when forced. Check a long History range for nginx VOD clip-limit errors.
 6. Review recent logs for recording backlog, ffmpeg errors, invalid segments and
@@ -98,7 +100,7 @@ Use `downstream/live_uat.py` from an isolated LAN-enabled container for the API,
 recording and media checks. UI and camera-trigger checks need their own evidence.
 Do not report complete UAT if a camera event or browser flow was not exercised.
 
-The live checks are supplied as four reusable scripts:
+The live checks are supplied as five reusable scripts:
 
 - `live_uat.py --url URL --version-prefix 0.18.2 --cameras Front_Gate Front_Driveway`
   checks processing, quality tags, VOD metadata and fresh SD. Add
@@ -119,6 +121,13 @@ The live checks are supplied as four reusable scripts:
   access to the SDP endpoint and the relay's advertised UDP candidate. An SSH
   tunnel forwards signaling only. The pinned aiortc client uses a larger receive
   buffer for HD I-frames. Recheck its private buffer API when upgrading aiortc.
+- `live_stream_timing.py --streams Front_Gate_main Front_Driveway_main
+  --seconds 180` measures sustained native HD packet arrival and presentation
+  timestamps. Run it in the disposable ROCm image on `traefik_proxy`, with
+  `python3 -` and the script on stdin. It uses the matching bundled FFprobe,
+  excludes startup analysis, expects 20 FPS and fails on arrival gaps over
+  150 ms or presentation gaps over 75 ms. Override the FPS/threshold arguments
+  only for a documented camera requirement, not to hide a regression.
 
 These scripts do not need production filesystem mounts or copied credentials.
 On nas01, a disposable container can reach `http://frigate-uat:5000` on the
@@ -132,6 +141,13 @@ health alone does not prove detection is ready. First compilation can take
 several minutes and briefly produce cache-backlog warnings. Record both startup
 and settled results. Pre-pull the candidate digest with the NAS's registry access
 before updating Portainer; `pull_policy: always` can override its no-pull option.
+
+On nas01, `<camera>_source` is the original HEVC/AAC feed used by `record_events`.
+`<camera>_main` is a lossless timestamp-normalized, paced live copy. Preserve
+both aliases and this separation when updating. The camera-specific workaround
+assumes 20 FPS, no B-frames and AAC-LC with 1024 samples per frame. See the
+[HD pacing acceptance report](reports/2026-10-21-hd-live-pacing.md) and the
+[managed configuration guide](https://github.com/icn-brendon/nas01-compose/blob/update/frigate-0.18.2-dual-stream/frigate-uat/HD-LIVE.md).
 
 ## Home Assistant relay after container replacement
 
