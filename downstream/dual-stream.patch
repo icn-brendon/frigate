@@ -77,10 +77,10 @@ index 70cb744f135a33f73bd75ed9efe84d0ee524a6f6..9bb4b57de6172da40d97a096ce8c1dc5
  if config.get("birdseye", {}).get("restream", False):
      birdseye: dict[str, Any] = config.get("birdseye")
 diff --git a/docs/static/frigate-api.yaml b/docs/static/frigate-api.yaml
-index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d8116f9798f 100644
+index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..603a616de9e4d7d3fc2e34bb299dfc1aca191594 100644
 --- a/docs/static/frigate-api.yaml
 +++ b/docs/static/frigate-api.yaml
-@@ -5789,6 +5789,66 @@ paths:
+@@ -5789,6 +5789,65 @@ paths:
              type: boolean
              default: false
              title: Force Discontinuity
@@ -115,8 +115,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
 +        **Access:** Authenticated user with access to the referenced camera.
 +
 +        Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.
-+      operationId: 
-+        vod_ts_with_quality_vod__camera_name__start__start_ts__end__end_ts__quality__quality__get
++      operationId: vod_ts_quality
 +      parameters:
 +        - name: camera_name
 +          in: path
@@ -147,7 +146,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
        responses:
          '200':
            description: Successful Response
-@@ -5901,6 +5961,15 @@ paths:
+@@ -5901,6 +5960,15 @@ paths:
            schema:
              type: string
              title: Tz Name
@@ -163,7 +162,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
        responses:
          '200':
            description: Successful Response
-@@ -5989,6 +6058,15 @@ paths:
+@@ -5989,6 +6057,15 @@ paths:
            schema:
              type: number
              title: End Ts
@@ -179,7 +178,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
        responses:
          '200':
            description: Successful Response
-@@ -6952,6 +7030,64 @@ paths:
+@@ -6952,6 +7029,63 @@ paths:
  
          Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used
        operationId: recordings__camera_name__recordings_get
@@ -239,12 +238,11 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
 +        Bounded by a maximum time window and a maximum row count (M6). Responses
 +        include a ``truncated`` flag so clients can detect when the row cap was
 +        hit and narrow their window.
-+      operationId: 
-+        main_stream_availability__camera_name__recordings_main_availability_get
++      operationId: main_stream_availability
        parameters:
          - name: camera_name
            in: path
-@@ -7380,6 +7516,12 @@ components:
+@@ -7380,6 +7514,12 @@ components:
              - type: 'null'
            title: Client item ID
            description: Optional opaque client identifier echoed back in results
@@ -257,7 +255,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
        type: object
        required:
          - camera
-@@ -8201,6 +8343,19 @@ components:
+@@ -8201,6 +8341,19 @@ components:
          - in_progress
        title: ExportModel
        description: Model representing a single export.
@@ -277,7 +275,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
      ExportRecordingsBody:
        properties:
          source:
-@@ -8223,6 +8378,12 @@ components:
+@@ -8223,6 +8376,12 @@ components:
              - type: 'null'
            title: Export case ID
            description: ID of the export case to assign this export to
@@ -290,7 +288,7 @@ index 7753ed7af3b7d995c3d6485b47d68daeaa426b9b..98f7b7bfdde965754686e2fe1bde9d81
          chapters:
            anyOf:
              - $ref: '#/components/schemas/ChaptersEnum'
-@@ -8252,6 +8413,12 @@ components:
+@@ -8252,6 +8411,12 @@ components:
              - type: 'null'
            title: Export case ID
            description: ID of the export case to assign this export to
@@ -416,7 +414,7 @@ index 361300daa70203d3c78011d2ff7c9b4100d22d2d..0d7e8f8349d27ac88e9ab82ce7192ca3
      try:
          start_export_job(request.app.frigate_config, export_job)
 diff --git a/frigate/api/media.py b/frigate/api/media.py
-index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..b69aa01eab7008150672de0c4147dcb0c3cfbeff 100644
+index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..c26d2d1c0c620a048033049f559cfe8361e70144 100644
 --- a/frigate/api/media.py
 +++ b/frigate/api/media.py
 @@ -58,6 +58,21 @@ from frigate.util.object import create_empty_regions_grid
@@ -503,12 +501,13 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..b69aa01eab7008150672de0c4147dcb0
          logger.debug(
              "VOD: processing recording: %s start=%s end=%s duration=%s",
              recording.path,
-@@ -700,6 +735,20 @@ async def vod_ts(
+@@ -700,6 +735,21 @@ async def vod_ts(
      )
  
  
 +@router.get(
 +    "/vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}",
++    operation_id="vod_ts_quality",
 +    dependencies=[Depends(require_camera_access)],
 +    description="Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.",
 +)
@@ -524,7 +523,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..b69aa01eab7008150672de0c4147dcb0
  @router.get(
      "/vod/{year_month}/{day}/{hour}/{camera_name}",
      dependencies=[Depends(require_camera_access)],
-@@ -718,7 +767,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
+@@ -718,7 +768,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
      description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
  )
  async def vod_hour(
@@ -538,7 +537,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..b69aa01eab7008150672de0c4147dcb0
  ):
      parts = year_month.split("-")
      start_date = (
-@@ -729,7 +783,7 @@ async def vod_hour(
+@@ -729,7 +784,7 @@ async def vod_hour(
      start_ts = start_date.timestamp()
      end_ts = end_date.timestamp()
  
@@ -547,7 +546,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..b69aa01eab7008150672de0c4147dcb0
  
  
  @router.get(
-@@ -784,8 +838,9 @@ async def vod_clip(
+@@ -784,8 +839,9 @@ async def vod_clip(
      camera_name: str,
      start_ts: float,
      end_ts: float,
@@ -559,7 +558,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..b69aa01eab7008150672de0c4147dcb0
  
  @router.get(
 diff --git a/frigate/api/record.py b/frigate/api/record.py
-index 5db257f48203e8875a69a83ad4ca8c07e40898ff..a6ecff69dc0c9de5719d2eacf728d4fd9eecdffa 100644
+index 5db257f48203e8875a69a83ad4ca8c07e40898ff..e1814e7119feded312e842d332f78762ddbbf071 100644
 --- a/frigate/api/record.py
 +++ b/frigate/api/record.py
 @@ -168,6 +168,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
@@ -607,7 +606,7 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..a6ecff69dc0c9de5719d2eacf728d4fd
 +MAIN_AVAILABILITY_MAX_ROWS = 10_000
 +
 +
-+@router.get("/{camera_name}/recordings/main_availability", dependencies=[Depends(require_camera_access)])
++@router.get("/{camera_name}/recordings/main_availability", dependencies=[Depends(require_camera_access)], operation_id="main_stream_availability")
 +async def main_stream_availability(
 +    camera_name: str,
 +    after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
