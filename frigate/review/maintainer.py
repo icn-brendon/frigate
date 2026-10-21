@@ -115,9 +115,11 @@ class PendingReviewSegment:
         if self._frame is not None:
             self.thumb_time = datetime.datetime.now().timestamp()
             self.has_frame = True
-            cv2.imwrite(
+            Path(self.frame_path).parent.mkdir(parents=True, exist_ok=True)
+            if not cv2.imwrite(
                 self.frame_path, self._frame, [int(cv2.IMWRITE_WEBP_QUALITY), 60]
-            )
+            ):
+                logger.error("Failed to write review thumbnail to %s", self.frame_path)
 
     def save_full_frame(self, camera_config: CameraConfig, frame: np.ndarray) -> None:
         color_frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
@@ -128,9 +130,11 @@ class PendingReviewSegment:
 
         if self._frame is not None:
             self.has_frame = True
-            cv2.imwrite(
+            Path(self.frame_path).parent.mkdir(parents=True, exist_ok=True)
+            if not cv2.imwrite(
                 self.frame_path, self._frame, [int(cv2.IMWRITE_WEBP_QUALITY), 60]
-            )
+            ):
+                logger.error("Failed to write review thumbnail to %s", self.frame_path)
 
     def get_data(self, ended: bool) -> dict:
         end_time = None
@@ -374,8 +378,44 @@ class ReviewSegmentMaintainer(threading.Thread):
         """Forcibly end the pending segment for a camera."""
         segment = self.active_review_segments.get(camera)
         if segment:
+            if self.indefinite_events.get(camera):
+                self.indefinite_events[camera] = {}
+                now = datetime.datetime.now().timestamp()
+
+                if segment.last_alert_time == sys.maxsize:
+                    segment.last_alert_time = now
+
+                if segment.last_detection_time == sys.maxsize:
+                    segment.last_detection_time = now
+
             prev_data = segment.get_data(False)
             return self._publish_segment_end(segment, prev_data)
+        return None
+
+    def get_manual_event_severity(self, camera: str, label: str) -> SeverityEnum | None:
+        """Determine the review severity for a manual event label.
+
+        Alert labels take precedence over detection labels, matching how
+        tracked objects are categorized. Labels in neither list default to
+        alerts so manual events keep their historical severity.
+        """
+        review_config = self.config.cameras[camera].review
+        # label contains 'label: sub_label', only the label is categorized
+        label = label.split(": ")[0]
+
+        if review_config.alerts.enabled and label in review_config.alerts.labels:
+            return SeverityEnum.alert
+
+        if (
+            review_config.detections.enabled
+            and review_config.detections.labels is not None
+            and label in review_config.detections.labels
+        ):
+            return SeverityEnum.detection
+
+        if review_config.alerts.enabled:
+            return SeverityEnum.alert
+
         return None
 
     def update_existing_segment(
@@ -720,22 +760,17 @@ class ReviewSegmentMaintainer(threading.Thread):
                             manual_info["label"]
                         )
                         if topic == DetectionTypeEnum.api:
-                            # manual_info["label"] contains 'label: sub_label'
-                            # so split out the label without modifying manual_info
-                            det_labels = self.config.cameras[
-                                camera
-                            ].review.detections.labels
-                            if (
-                                self.config.cameras[camera].review.detections.enabled
-                                and det_labels is not None
-                                and manual_info["label"].split(": ")[0] in det_labels
-                            ):
-                                current_segment.last_detection_time = manual_info[
-                                    "end_time"
-                                ]
-                            elif self.config.cameras[camera].review.alerts.enabled:
+                            severity = self.get_manual_event_severity(
+                                camera, manual_info["label"]
+                            )
+
+                            if severity == SeverityEnum.alert:
                                 current_segment.severity = SeverityEnum.alert
                                 current_segment.last_alert_time = manual_info[
+                                    "end_time"
+                                ]
+                            elif severity == SeverityEnum.detection:
+                                current_segment.last_detection_time = manual_info[
                                     "end_time"
                                 ]
                         elif (
@@ -751,21 +786,12 @@ class ReviewSegmentMaintainer(threading.Thread):
                         current_segment.detections[manual_info["event_id"]] = (
                             manual_info["label"]
                         )
-                        if (
-                            topic == DetectionTypeEnum.api
-                            and self.config.cameras[camera].review.alerts.enabled
-                        ):
-                            # manual_info["label"] contains 'label: sub_label'
-                            # so split out the label without modifying manual_info
-                            det_labels = self.config.cameras[
-                                camera
-                            ].review.detections.labels
+                        if topic == DetectionTypeEnum.api:
                             if (
-                                not self.config.cameras[
-                                    camera
-                                ].review.detections.enabled
-                                or det_labels is None
-                                or manual_info["label"].split(": ")[0] not in det_labels
+                                self.get_manual_event_severity(
+                                    camera, manual_info["label"]
+                                )
+                                == SeverityEnum.alert
                             ):
                                 current_segment.severity = SeverityEnum.alert
                         elif (
@@ -839,18 +865,9 @@ class ReviewSegmentMaintainer(threading.Thread):
                             detections,
                         )
                 elif topic == DetectionTypeEnum.api:
-                    severity = None
-                    # manual_info["label"] contains 'label: sub_label'
-                    # so split out the label without modifying manual_info
-                    det_labels = self.config.cameras[camera].review.detections.labels
-                    if (
-                        self.config.cameras[camera].review.detections.enabled
-                        and det_labels is not None
-                        and manual_info["label"].split(": ")[0] in det_labels
-                    ):
-                        severity = SeverityEnum.detection
-                    elif self.config.cameras[camera].review.alerts.enabled:
-                        severity = SeverityEnum.alert
+                    severity = self.get_manual_event_severity(
+                        camera, manual_info["label"]
+                    )
 
                     if severity:
                         api_segment = PendingReviewSegment(

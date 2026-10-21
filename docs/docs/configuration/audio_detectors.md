@@ -256,7 +256,7 @@ The only field that is valid at the camera level is `enabled`.
 
 #### Live transcription
 
-The single camera Live view in the Frigate UI supports live transcription of audio for streams defined with the `audio` role. Use the Enable/Disable Live Audio Transcription button/switch to toggle transcription processing. When speech is heard, the UI will display a black box over the top of the camera stream with text. The MQTT topic `frigate/<camera_name>/audio/transcription` will also be updated in real-time with transcribed text.
+The single camera Live view in the Frigate UI supports live transcription of audio for streams defined with the `audio` role. Use the Enable/Disable Live Audio Transcription button/switch to toggle transcription processing, or toggle it outside of the UI with the [`frigate/<camera_name>/audio_transcription/set`](/integrations/mqtt#frigatecamera_nameaudio_transcriptionset) MQTT topic or the HTTP API. When speech is heard, the UI will display a black box over the top of the camera stream with text. The MQTT topic `frigate/<camera_name>/audio/transcription` will also be updated in real-time with transcribed text.
 
 Results can be error-prone due to a number of factors, including:
 
@@ -272,7 +272,7 @@ If you have CUDA hardware, you can experiment with the `large` `whisper` model o
 
 #### Transcription and translation of `speech` audio events
 
-Any `speech` events in Explore can be transcribed and/or translated through the Transcribe button in the Tracked Object Details pane.
+Any `speech` events in Explore can be transcribed and/or translated through the Transcribe button (the microphone icon) in the Tracked Object Details pane.
 
 In order to use transcription and translation for past events, you must enable audio detection and define `speech` as an audio type to listen for. To have `speech` events translated into the language of your choice, set the `language` config parameter with the correct [language code](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L10).
 
@@ -294,7 +294,7 @@ Recorded `speech` events will always use a `whisper` model, regardless of the `m
 
    Because transcription is **serialized (one event at a time)** and speech events can be generated far faster than they can be processed, an auto-transcribe toggle would very quickly create an ever-growing backlog and degrade core functionality. For the amount of engineering and risk involved, it adds **very little practical value** for the majority of deployments, which are often on low-powered, edge hardware.
 
-   If you hear speech that's actually important and worth saving/indexing for the future, **just press the transcribe button in Explore** on that specific `speech` event - that keeps things explicit, reliable, and under your control.
+   If you hear speech that's actually important and worth saving/indexing for the future, **just press the transcribe button (the microphone icon) in Explore** on that specific `speech` event - that keeps things explicit, reliable, and under your control.
 
    Other options are being considered for future versions of Frigate to add transcription options that support external `whisper` Docker containers. A single transcription service could then be shared by Frigate and other applications (for example, Home Assistant Voice), and run on more powerful machines when available.
 

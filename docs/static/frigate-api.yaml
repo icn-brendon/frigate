@@ -693,6 +693,43 @@ paths:
         **Access:** Admin role required.
 
         Set a camera feature state. Use camera_name='*' to target all cameras.
+
+        The value to set is sent in the request body as `{"value": "<value>"}`.
+
+        | Feature | Accepted values |
+        | --- | --- |
+        | `enabled` | `ON`, `OFF` |
+        | `detect` | `ON`, `OFF` |
+        | `motion` | `ON`, `OFF` |
+        | `recordings` | `ON`, `OFF` |
+        | `snapshots` | `ON`, `OFF` |
+        | `audio` | `ON`, `OFF` |
+        | `audio_transcription` | `ON`, `OFF` |
+        | `notifications` | `ON`, `OFF` |
+        | `review_alerts` | `ON`, `OFF` |
+        | `review_detections` | `ON`, `OFF` |
+        | `object_descriptions` | `ON`, `OFF` |
+        | `review_descriptions` | `ON`, `OFF` |
+        | `improve_contrast` | `ON`, `OFF` |
+        | `ptz_autotracker` | `ON`, `OFF` |
+        | `birdseye` | `ON`, `OFF` |
+        | `birdseye_mode` | `CONTINUOUS`, `MOTION`, `OBJECTS` |
+        | `motion_contour_area` | integer |
+        | `motion_threshold` | integer |
+        | `motion_mask` | `ON`, `OFF` |
+        | `object_mask` | `ON`, `OFF` |
+        | `zone` | `ON`, `OFF` |
+        | `profile` | a profile name, or `none` to deactivate |
+
+        `motion_mask`, `object_mask`, and `zone` require the `sub_command` path
+        parameter to be set to the name of the mask or zone. All other features
+        reject a sub-command.
+
+        `profile` applies globally rather than per camera, so it requires
+        `camera_name` to be `*`.
+
+        These features map to the equivalent MQTT topics, which document the
+        behavior of each value in more detail.
       operationId: 
         camera_set_camera__camera_name__set__feature___sub_command__put
       parameters:
@@ -746,6 +783,43 @@ paths:
         **Access:** Admin role required.
 
         Set a camera feature state. Use camera_name='*' to target all cameras.
+
+        The value to set is sent in the request body as `{"value": "<value>"}`.
+
+        | Feature | Accepted values |
+        | --- | --- |
+        | `enabled` | `ON`, `OFF` |
+        | `detect` | `ON`, `OFF` |
+        | `motion` | `ON`, `OFF` |
+        | `recordings` | `ON`, `OFF` |
+        | `snapshots` | `ON`, `OFF` |
+        | `audio` | `ON`, `OFF` |
+        | `audio_transcription` | `ON`, `OFF` |
+        | `notifications` | `ON`, `OFF` |
+        | `review_alerts` | `ON`, `OFF` |
+        | `review_detections` | `ON`, `OFF` |
+        | `object_descriptions` | `ON`, `OFF` |
+        | `review_descriptions` | `ON`, `OFF` |
+        | `improve_contrast` | `ON`, `OFF` |
+        | `ptz_autotracker` | `ON`, `OFF` |
+        | `birdseye` | `ON`, `OFF` |
+        | `birdseye_mode` | `CONTINUOUS`, `MOTION`, `OBJECTS` |
+        | `motion_contour_area` | integer |
+        | `motion_threshold` | integer |
+        | `motion_mask` | `ON`, `OFF` |
+        | `object_mask` | `ON`, `OFF` |
+        | `zone` | `ON`, `OFF` |
+        | `profile` | a profile name, or `none` to deactivate |
+
+        `motion_mask`, `object_mask`, and `zone` require the `sub_command` path
+        parameter to be set to the name of the mask or zone. All other features
+        reject a sub-command.
+
+        `profile` applies globally rather than per camera, so it requires
+        `camera_name` to be `*`.
+
+        These features map to the equivalent MQTT topics, which document the
+        behavior of each value in more detail.
       operationId: camera_set_camera__camera_name__set__feature__put
       parameters:
         - name: camera_name
@@ -1402,7 +1476,7 @@ paths:
         - Classification
       summary: Get custom classification attributes
       description: |-
-        **Access:** Admin role required.
+        **Access:** Authenticated user with access to all cameras.
 
         Returns custom classification attributes for a given object type.
             Only includes models with classification_type set to 'attribute'.
@@ -1436,8 +1510,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
-        - frigateAdminAuth: []
-      x-required-role: admin
+        - frigateUserAuth: []
+      x-required-role: all_cameras
   /classification/{name}/train:
     get:
       tags:
@@ -2234,15 +2308,15 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
         - frigateUserAuth: []
-      x-required-role: any
-      description: '**Access:** Any authenticated user.'
+      x-required-role: camera
+      description: '**Access:** Authenticated user with access to the referenced camera.'
   /review/summarize/start/{start_ts}/end/{end_ts}:
     post:
       tags:
         - Review
       summary: Generate Review Summary
       description: |-
-        **Access:** Admin role required.
+        **Access:** Authenticated user with access to all cameras.
 
         Use GenAI to summarize review items over a period of time.
       operationId: 
@@ -2273,8 +2347,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
-        - frigateAdminAuth: []
-      x-required-role: admin
+        - frigateUserAuth: []
+      x-required-role: all_cameras
   /:
     get:
       tags:
@@ -3999,6 +4073,16 @@ paths:
               - type: 'null'
             default: 100
             title: Limit
+        - name: offset
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            default: 0
+            title: Offset
         - name: after
           in: query
           required: false
@@ -4304,6 +4388,16 @@ paths:
               - type: 'null'
             default: 50
             title: Limit
+        - name: offset
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: integer
+                minimum: 0
+              - type: 'null'
+            default: 0
+            title: Offset
         - name: cameras
           in: query
           required: false
@@ -5019,6 +5113,7 @@ paths:
             NOTES:
             - Creating a manual event does not trigger an update to /events MQTT topic.
             - If a duration is set to null, the event will need to be ended manually by calling /events/{event_id}/end.
+            - The review item is an alert unless the label is listed in the camera's review -> detections -> labels config.
       operationId: create_event_events__camera_name___label__create_post
       parameters:
         - name: camera_name
@@ -5694,6 +5789,65 @@ paths:
             type: boolean
             default: false
             title: Force Discontinuity
+        - name: stream_quality
+          in: query
+          required: false
+          schema:
+            type: string
+            default: sub
+            title: Stream Quality
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - frigateUserAuth: []
+      x-required-role: camera
+  /vod/{camera_name}/start/{start_ts}/end/{end_ts}/quality/{quality}:
+    get:
+      tags:
+        - Media
+      summary: Vod Ts With Quality
+      description: |-
+        **Access:** Authenticated user with access to the referenced camera.
+
+        Returns an HLS playlist for the specified timestamp-range and stream quality. The quality segment is embedded in the path so it is forwarded by the nginx-vod-module upstream subrequest.
+      operationId: vod_ts_quality
+      parameters:
+        - name: camera_name
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            title: Camera Name
+        - name: start_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: Start Ts
+        - name: end_ts
+          in: path
+          required: true
+          schema:
+            type: number
+            title: End Ts
+        - name: quality
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Quality
       responses:
         '200':
           description: Successful Response
@@ -5806,6 +5960,15 @@ paths:
           schema:
             type: string
             title: Tz Name
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            description: 'Stream quality: sub or main'
+            default: sub
+            title: Quality
+          description: 'Stream quality: sub or main'
       responses:
         '200':
           description: Successful Response
@@ -5894,6 +6057,15 @@ paths:
           schema:
             type: number
             title: End Ts
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            description: 'Stream quality: sub or main'
+            default: sub
+            title: Quality
+          description: 'Stream quality: sub or main'
       responses:
         '200':
           description: Successful Response
@@ -6878,6 +7050,63 @@ paths:
           schema:
             type: number
             title: Before
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            default: sub
+            title: Quality
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+        - frigateUserAuth: []
+      x-required-role: camera
+  /{camera_name}/recordings/main_availability:
+    get:
+      tags:
+        - Recordings
+      summary: Main Stream Availability
+      description: |-
+        **Access:** Authenticated user with access to the referenced camera.
+
+        Return time ranges where main stream recordings are available.
+
+        Bounded by a maximum time window and a maximum row count (M6). Responses
+        include a ``truncated`` flag so clients can detect when the row cap was
+        hit and narrow their window.
+      operationId: main_stream_availability
+      parameters:
+        - name: camera_name
+          in: path
+          required: true
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            title: Camera Name
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: number
+            title: After
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: number
+            title: Before
       responses:
         '200':
           description: Successful Response
@@ -7034,7 +7263,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/DebugReplayStartResponse'
         '400':
-          description: Invalid camera, time range, or no recordings
+          description: Invalid camera or time range
+        '404':
+          description: No recordings in the requested time range
         '409':
           description: A replay session is already active
         '422':
@@ -7283,6 +7514,12 @@ components:
             - type: 'null'
           title: Client item ID
           description: Optional opaque client identifier echoed back in results
+        quality:
+          $ref: '#/components/schemas/ExportQualityEnum'
+          title: Stream quality
+          description: 'Recording stream quality to export: auto prefers HD (main)
+            footage when it covers the range, falling back to sub.'
+          default: auto
       type: object
       required:
         - camera
@@ -8104,6 +8341,19 @@ components:
         - in_progress
       title: ExportModel
       description: Model representing a single export.
+    ExportQualityEnum:
+      type: string
+      enum:
+        - auto
+        - main
+        - sub
+      title: ExportQualityEnum
+      description: |-
+        Which recording stream quality an export should use.
+
+        auto: prefer the HD (main) event stream when any main-quality footage
+        overlaps the requested range, otherwise fall back to the continuous
+        sub stream. main/sub force that quality explicitly.
     ExportRecordingsBody:
       properties:
         source:
@@ -8126,6 +8376,12 @@ components:
             - type: 'null'
           title: Export case ID
           description: ID of the export case to assign this export to
+        quality:
+          $ref: '#/components/schemas/ExportQualityEnum'
+          title: Stream quality
+          description: 'Recording stream quality to export: auto prefers HD (main)
+            footage when it covers the range, falling back to sub.'
+          default: auto
         chapters:
           anyOf:
             - $ref: '#/components/schemas/ChaptersEnum'
@@ -8155,6 +8411,12 @@ components:
             - type: 'null'
           title: Export case ID
           description: ID of the export case to assign this export to
+        quality:
+          $ref: '#/components/schemas/ExportQualityEnum'
+          title: Stream quality
+          description: 'Recording stream quality to export: auto prefers HD (main)
+            footage when it covers the range, falling back to sub.'
+          default: auto
         ffmpeg_input_args:
           anyOf:
             - type: string
@@ -8244,6 +8506,11 @@ components:
       properties:
         provider:
           $ref: '#/components/schemas/GenAIProviderEnum'
+        name:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Name
         api_key:
           anyOf:
             - type: string

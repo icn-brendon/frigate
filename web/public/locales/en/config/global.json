@@ -322,7 +322,7 @@
       },
       "model_type": {
         "label": "Object Detection Model Type",
-        "description": "Detector model architecture type (ssd, yolox, yolonas) used by some detectors for optimization."
+        "description": "Detector model architecture type (ssd, yolox, yolonas, yolo-generic, rfdetr, dfine) used by some detectors for optimization."
       }
     },
     "model_path": {
@@ -355,22 +355,6 @@
       "api_key": {
         "label": "DeepStack API key (if required)",
         "description": "Optional API key for authenticated DeepStack services."
-      }
-    },
-    "degirum": {
-      "label": "DeGirum",
-      "description": "DeGirum detector for running models via DeGirum cloud or local inference services.",
-      "location": {
-        "label": "Inference Location",
-        "description": "Location of the DeGirim inference engine (e.g. '@cloud', '127.0.0.1')."
-      },
-      "zoo": {
-        "label": "Model Zoo",
-        "description": "Path or URL to the DeGirum model zoo."
-      },
-      "token": {
-        "label": "DeGirum Cloud Token",
-        "description": "Token for DeGirum Cloud access."
       }
     },
     "edgetpu": {
@@ -495,7 +479,7 @@
     },
     "model_type": {
       "label": "Object Detection Model Type",
-      "description": "Detector model architecture type (ssd, yolox, yolonas) used by some detectors for optimization."
+      "description": "Detector model architecture type (ssd, yolox, yolonas, yolo-generic, rfdetr, dfine) used by some detectors for optimization."
     }
   },
   "genai": {
@@ -1543,8 +1527,8 @@
       "description": "Numeric order used to sort the camera in the UI (default dashboard and lists); larger numbers appear later."
     },
     "dashboard": {
-      "label": "Show in UI",
-      "description": "Toggle whether this camera is visible everywhere in the Frigate UI. Disabling this will require manually editing the config to view this camera in the UI again."
+      "label": "Show on Live dashboard",
+      "description": "Toggle whether this camera is visible on the default All Cameras live dashboard. The camera remains available everywhere else in the UI, including camera groups and settings."
     },
     "review": {
       "label": "Show in review",

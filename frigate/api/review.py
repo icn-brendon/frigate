@@ -17,6 +17,7 @@ from frigate.api.auth import (
     get_allowed_cameras_for_filter,
     get_current_user,
     require_camera_access,
+    require_full_camera_access,
     require_role,
 )
 from frigate.api.defs.query.review_query_parameters import (
@@ -40,6 +41,22 @@ from frigate.util.time import get_dst_transitions
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=[Tags.review])
+
+
+def get_label_clause(label: str, include_audio: bool = True):
+    """Build a clause matching a label within a review segment's data.
+
+    Verified objects are stored with a `-verified` suffix (eg. `person-verified`)
+    so that variant is matched as well.
+    """
+    clause = (ReviewSegment.data["objects"].cast("text") % f'*"{label}"*') | (
+        ReviewSegment.data["objects"].cast("text") % f'*"{label}-verified"*'
+    )
+
+    if include_audio:
+        clause |= ReviewSegment.data["audio"].cast("text") % f'*"{label}"*'
+
+    return clause
 
 
 @router.get(
@@ -91,10 +108,7 @@ async def review(
         filtered_labels = labels.split(",")
 
         for label in filtered_labels:
-            label_clauses.append(
-                (ReviewSegment.data["objects"].cast("text") % f'*"{label}"*')
-                | (ReviewSegment.data["audio"].cast("text") % f'*"{label}"*')
-            )
+            label_clauses.append(get_label_clause(label))
         clauses.append(reduce(operator.or_, label_clauses))
 
     if zones != "all":
@@ -235,10 +249,7 @@ async def review_summary(
         filtered_labels = labels.split(",")
 
         for label in filtered_labels:
-            label_clauses.append(
-                (ReviewSegment.data["objects"].cast("text") % f'*"{label}"*')
-                | (ReviewSegment.data["audio"].cast("text") % f'*"{label}"*')
-            )
+            label_clauses.append(get_label_clause(label))
         clauses.append(reduce(operator.or_, label_clauses))
     if zones != "all":
         # use matching so segments with multiple zones
@@ -336,9 +347,8 @@ async def review_summary(
         filtered_labels = labels.split(",")
 
         for label in filtered_labels:
-            label_clauses.append(
-                ReviewSegment.data["objects"].cast("text") % f'*"{label}"*'
-            )
+            label_clauses.append(get_label_clause(label, include_audio=False))
+
         clauses.append(reduce(operator.or_, label_clauses))
 
     # Find the time range of available data
@@ -709,6 +719,7 @@ async def get_review(request: Request, review_id: str):
     dependencies=[Depends(allow_any_authenticated())],
 )
 async def set_not_reviewed(
+    request: Request,
     review_id: str,
     current_user: dict = Depends(get_current_user),
 ):
@@ -727,6 +738,8 @@ async def set_not_reviewed(
             status_code=404,
         )
 
+    await require_camera_access(review.camera, request=request)
+
     try:
         user_review = UserReviewStatus.get(
             UserReviewStatus.user_id == user_id,
@@ -743,9 +756,12 @@ async def set_not_reviewed(
     )
 
 
+# Intentionally not camera scoped, as the summary correlates each flagged event
+# with overlapping activity on other cameras. Restricted to callers who can
+# already see every camera, so the unscoped query discloses nothing.
 @router.post(
     "/review/summarize/start/{start_ts}/end/{end_ts}",
-    dependencies=[Depends(require_role(["admin"]))],
+    dependencies=[Depends(require_full_camera_access)],
     description="Use GenAI to summarize review items over a period of time.",
 )
 def generate_review_summary(request: Request, start_ts: float, end_ts: float):

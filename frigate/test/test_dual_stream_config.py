@@ -141,10 +141,7 @@ class TestDualStreamConfig(unittest.TestCase):
         cam = frigate_config.cameras["back"]
 
         roles_in_cmds = [
-            {
-                role.value if hasattr(role, "value") else role
-                for role in entry["roles"]
-            }
+            {role.value if hasattr(role, "value") else role for role in entry["roles"]}
             for entry in cam.ffmpeg_cmds
         ]
         self.assertTrue(

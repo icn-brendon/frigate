@@ -216,20 +216,10 @@ def process_frames(
 
     # remove license_plate from attributes if this camera is a dedicated LPR cam
     if camera_config.type == CameraTypeEnum.lpr:
-        modified_attributes_map = model_config.attributes_map.copy()
-
-        if (
-            "car" in modified_attributes_map
-            and "license_plate" in modified_attributes_map["car"]
-        ):
-            modified_attributes_map["car"] = [
-                attr
-                for attr in modified_attributes_map["car"]
-                if attr != "license_plate"
-            ]
-
-            attributes_map = modified_attributes_map
-
+        attributes_map = {
+            label: [attr for attr in attributes if attr != "license_plate"]
+            for label, attributes in model_config.attributes_map.items()
+        }
         all_attributes = [
             attr for attr in model_config.all_attributes if attr != "license_plate"
         ]
@@ -358,12 +348,17 @@ def process_frames(
             ]
 
             # only add in the motion boxes when not calibrating and a ptz is not moving via autotracking
-            # ptz_moving_at_frame_time() always returns False for non-autotracking cameras
-            if not motion_detector.is_calibrating() and not ptz_moving_at_frame_time(
-                frame_time,
-                ptz_metrics.start_time.value,
-                ptz_metrics.stop_time.value,
-            ):
+            # the ptz timestamps are only maintained while autotracking is on, so gate
+            # on the metric rather than trusting them to be reset otherwise
+            ptz_moving = ptz_metrics.autotracker_enabled.value and (
+                ptz_moving_at_frame_time(
+                    frame_time,
+                    ptz_metrics.start_time.value,
+                    ptz_metrics.stop_time.value,
+                )
+            )
+
+            if not motion_detector.is_calibrating() and not ptz_moving:
                 # find motion boxes that are not inside tracked object regions
                 standalone_motion_boxes = [
                     b for b in motion_boxes if not inside_any(b, regions)

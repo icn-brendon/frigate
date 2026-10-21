@@ -3,7 +3,6 @@ import { isDesktop } from "react-device-detect";
 import axios from "axios";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 
 import {
@@ -44,6 +43,7 @@ import {
   ExportQuality,
 } from "@/types/export";
 import { FrigateConfig } from "@/types/frigateConfig";
+import { baseUrl } from "@/api/baseUrl";
 import { REVIEW_PADDING, ReviewSegment } from "@/types/review";
 import { resolveCameraName } from "@/hooks/use-camera-friendly-name";
 import { useDateLocale } from "@/hooks/use-date-locale";
@@ -66,7 +66,6 @@ export default function MultiExportDialog({
 }: MultiExportDialogProps) {
   const { t } = useTranslation(["components/dialog", "common"]);
   const locale = useDateLocale();
-  const navigate = useNavigate();
   const isAdmin = useIsAdmin();
 
   const { data: config } = useSWR<FrigateConfig>("config");
@@ -208,19 +207,24 @@ export default function MultiExportDialog({
       const results = response.data.results ?? [];
       const successful = results.filter((r) => r.success);
       const failed = results.filter((r) => !r.success);
+      const exportCaseId = response.data.export_case_id;
+      const viewCaseAction = exportCaseId ? (
+        <a
+          href={`${baseUrl}export?caseId=${exportCaseId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Button>{t("export.toast.view", { ns: "components/dialog" })}</Button>
+        </a>
+      ) : undefined;
 
       if (successful.length > 0 && failed.length === 0) {
         toast.success(
-          t(
-            isAdmin
-              ? "export.multi.toast.started"
-              : "export.multi.toast.startedNoCase",
-            {
-              ns: "components/dialog",
-              count: successful.length,
-            },
-          ),
-          { position: "top-center" },
+          t("export.multi.toast.started", {
+            ns: "components/dialog",
+            count: successful.length,
+          }),
+          { position: "top-center", action: viewCaseAction },
         );
       } else if (successful.length > 0 && failed.length > 0) {
         // Resolve each failure to its review via item_index so same-camera
@@ -234,7 +238,7 @@ export default function MultiExportDialog({
             total: results.length,
             failedItems: failedLabels,
           }),
-          { position: "top-center" },
+          { position: "top-center", action: viewCaseAction },
         );
       } else {
         const failedLabels = failed.map(formatFailureLabel).join(", ");
@@ -252,9 +256,6 @@ export default function MultiExportDialog({
         onStarted();
         setOpen(false);
         resetState();
-        if (response.data.export_case_id) {
-          navigate(`/export?caseId=${response.data.export_case_id}`);
-        }
       }
     } catch (error) {
       const apiError = error as {
@@ -280,7 +281,6 @@ export default function MultiExportDialog({
     formatFailureLabel,
     isAdmin,
     isNewCase,
-    navigate,
     newCaseDescription,
     newCaseName,
     onStarted,

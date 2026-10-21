@@ -9,15 +9,16 @@
 # match the Python API responses.
 
 # Global ARG must be before any FROM to be visible in FROM directives
-ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:stable-rocm
+ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:0.18.2-rocm@sha256:d659f0967627e7bd0b29c96bc396e436ce041aa40bf19e213f02bdade6092a83
 
 # ---------------------------------------------------------------------------
 # Stage 1: build the web frontend (discarded after COPY)
 # ---------------------------------------------------------------------------
-FROM node:20 AS web-build
+FROM node:24.14.0-bookworm-slim AS web-build
 WORKDIR /work
+ENV NODE_OPTIONS=--max-old-space-size=4096
 COPY web/package.json web/package-lock.json ./
-RUN npm install
+RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build \
     && mv dist/BASE_PATH/monacoeditorwork/* dist/assets/ \
@@ -53,16 +54,8 @@ FROM ${BASE_IMAGE}
 # Replace nginx binary with our MAX_CLIPS=8192 build
 COPY --from=nginx-build /usr/local/nginx/sbin/nginx /usr/local/nginx/sbin/nginx
 
-# Python dependency pins that moved between the stable-rocm base image and
-# the 0.18 code we overlay. Only pure-Python, detector-agnostic packages are
-# updated here:
-#   - python-multipart: 0.18 pins 0.0.26 (base ships an older build).
-# Intentionally NOT updated:
-#   - openvino 2025.4.*: unused by the ROCm detector stack and a very large
-#     wheel; the base image's version stays.
-#   - onnxruntime/opencv/tensorflow: the rocm base ships GPU-specific builds
-#     that a blanket `pip install -r requirements-wheels.txt` would clobber.
-RUN pip3 install --no-cache-dir 'python-multipart==0.0.26'
+# Use dependencies from the matching, digest-pinned upstream release.
+# Do not carry old pip overrides into a new release or replace GPU-specific wheels.
 
 # Overwrite Python source and migrations with our fork's versions
 COPY frigate/ /opt/frigate/frigate/

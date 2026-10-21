@@ -399,9 +399,7 @@ class CameraConfig(FrigateBaseModel):
                 pass
             ffmpeg_output_args = (
                 record_events_args
-                + [
-                    f"{os.path.join(event_buffer_dir, CACHE_SEGMENT_FORMAT)}.mp4"
-                ]
+                + [f"{os.path.join(event_buffer_dir, CACHE_SEGMENT_FORMAT)}.mp4"]
                 + ffmpeg_output_args
             )
 

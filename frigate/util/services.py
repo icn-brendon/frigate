@@ -12,6 +12,7 @@ import subprocess as sp
 import time
 import traceback
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 import cv2
@@ -285,6 +286,10 @@ _XE_ENGINE_KEYS = {
     "vecs": "video-enhance",
     "ccs": "compute",
 }
+_INTEL_DRM_DRIVERS = ("i915", "xe")
+_PCI_ADDRESS_RE = re.compile(
+    r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$"
+)
 
 
 def _resolve_intel_gpu_pdev(device: str | None) -> str | None:
@@ -294,29 +299,70 @@ def _resolve_intel_gpu_pdev(device: str | None) -> str | None:
     if not device:
         return None
 
-    if re.match(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$", device):
+    if _PCI_ADDRESS_RE.match(device):
         return device
 
     name = os.path.basename(device.rstrip("/"))
     try:
-        return os.path.basename(os.path.realpath(f"/sys/class/drm/{name}/device"))
+        pdev = os.path.basename(os.path.realpath(f"/sys/class/drm/{name}/device"))
     except OSError:
         return None
 
+    # realpath does not raise on a nonexistent node; it returns the input
+    # path unchanged, so validate the result actually looks like a PCI
+    # address before trusting it.
+    return pdev if _PCI_ADDRESS_RE.match(pdev) else None
 
-def _read_intel_drm_fdinfo(target_pdev: str | None) -> dict:
+
+def _enumerate_drm_devices() -> dict[str, str]:
+    """Map each PCI-attached DRM device to its bound kernel driver.
+
+    Reads /sys/class/drm, which reflects every GPU on the host even when only
+    some render nodes are mapped into the container, so device presence can be
+    verified without /dev access. Returns {pdev: driver}, e.g.
+    {"0000:00:02.0": "i915"}.
+    """
+    devices: dict[str, str] = {}
+
+    try:
+        entries = os.listdir("/sys/class/drm")
+    except OSError:
+        return devices
+
+    for entry in entries:
+        device_dir = f"/sys/class/drm/{entry}/device"
+        pdev = os.path.basename(os.path.realpath(device_dir))
+
+        if not _PCI_ADDRESS_RE.match(pdev):
+            continue
+
+        try:
+            driver = os.path.basename(os.readlink(f"{device_dir}/driver"))
+        except OSError:
+            continue
+
+        devices[pdev] = driver
+
+    return devices
+
+
+def _read_intel_drm_fdinfo(target_pdev: str | None) -> dict | None:
     """Snapshot DRM fdinfo for every Intel client visible in /proc.
 
     Returns a dict keyed by (pdev, drm-client-id, pid) so the same context
     seen via multiple file descriptors on a single process collapses to one
-    entry.
+    entry. Clients whose fdinfo carries no engine counters are still included
+    with an empty "engines" dict so the caller can distinguish "clients exist
+    but the kernel publishes no busyness" from "no clients at all". Returns
+    None when /proc itself cannot be scanned, which is a different failure
+    than a scan that finds nothing.
     """
     snapshot: dict = {}
 
     try:
         proc_entries = os.listdir("/proc")
     except OSError:
-        return snapshot
+        return None
 
     for entry in proc_entries:
         if not entry.isdigit():
@@ -360,7 +406,7 @@ def _read_intel_drm_fdinfo(target_pdev: str | None) -> dict:
             if key in snapshot:
                 continue
 
-            engines: dict[str, tuple[int, int]] = {}
+            engines: dict[str, tuple[int, int, int]] = {}
 
             if driver == "i915":
                 for fkey, engine in _I915_ENGINE_KEYS.items():
@@ -368,29 +414,70 @@ def _read_intel_drm_fdinfo(target_pdev: str | None) -> dict:
                     if not raw:
                         continue
                     try:
-                        engines[engine] = (int(raw.split()[0]), 0)
+                        engines[engine] = (int(raw.split()[0]), 0, 1)
                     except (ValueError, IndexError):
                         continue
             else:
                 for suffix, engine in _XE_ENGINE_KEYS.items():
                     busy_raw = fields.get(f"drm-cycles-{suffix}")
                     total_raw = fields.get(f"drm-total-cycles-{suffix}")
+
                     if not (busy_raw and total_raw):
                         continue
+
+                    # drm-cycles-* is summed across every instance of the engine
+                    # class while drm-total-cycles-* tracks a single instance, so
+                    # busy/total scales up to the capacity (e.g. Battlemage
+                    # reports 2 for vcs/vecs). Capture it to divide back out;
+                    # absent means a single engine, so default to 1.
+                    capacity_raw = fields.get(f"drm-engine-capacity-{suffix}")
+
+                    try:
+                        capacity = int(capacity_raw.split()[0]) if capacity_raw else 1
+                    except (ValueError, IndexError):
+                        capacity = 1
+
                     try:
                         engines[engine] = (
                             int(busy_raw.split()[0]),
                             int(total_raw.split()[0]),
+                            max(1, capacity),
                         )
                     except (ValueError, IndexError):
                         continue
 
-            if not engines:
-                continue
-
             snapshot[key] = {"driver": driver, "pid": entry, "engines": engines}
 
     return snapshot
+
+
+def _idle_intel_gpu_stats(
+    target_pdev: str | None, intel_pdevs: dict[str, str]
+) -> dict[str, dict[str, Any]]:
+    """Build a 0% reading for the configured (or every) Intel GPU.
+
+    Used when the device is confirmed present but no DRM client is currently
+    attached, e.g. while camera processes are restarting. That is an idle
+    state, not a collection failure, so it must produce a valid reading:
+    returning None would latch the hwaccel error cooldown and blank GPU stats
+    for an hour over a momentary gap.
+    """
+    from frigate.stats.intel_gpu_info import intel_gpu_name_resolver
+
+    names = intel_gpu_name_resolver.get_names()
+    pdevs = [target_pdev] if target_pdev else sorted(intel_pdevs)
+
+    return {
+        pdev: {
+            "name": names.get(pdev) or "Intel iGPU",
+            "vendor": "intel",
+            "gpu": "0.0%",
+            "mem": "-%",
+            "compute": "0.0%",
+            "dec": "0.0%",
+        }
+        for pdev in pdevs
+    }
 
 
 def get_intel_gpu_stats(
@@ -399,27 +486,86 @@ def get_intel_gpu_stats(
     """Get stats by reading DRM fdinfo files, bucketed per-pdev.
 
     Each DRM client FD exposes monotonic per-engine busy counters via
-    /proc/<pid>/fdinfo/<fd> (i915 since kernel 5.19, Xe since first release).
-    We sample twice and divide busy-time deltas by wall-clock to derive
-    utilization. Render/3D and Compute are pooled into "compute"; Video and
-    VideoEnhance into "dec". Overall "gpu" is the sum of those pools (clamped
-    to 100%).
+    /proc/<pid>/fdinfo/<fd>. For i915 this requires kernel 6.5 or newer:
+    earlier kernels omit the per-engine counters whenever GuC submission is
+    active, which is the default on 12th gen and newer. i915 never exposes
+    them on GPUs older than Broadwell (Gen8). Xe has exposed them since its
+    first release. We sample twice and divide busy-time deltas by
+    wall-clock to derive utilization. Render/3D and Compute are pooled into
+    "compute"; Video and VideoEnhance into "dec". Overall "gpu" is the sum of
+    those pools (clamped to 100%).
 
     The return value is keyed by the GPU's drm-pdev string so multiple Intel
     GPUs in the same system are reported separately. Each entry carries a
     "name" populated from OpenVINO (falling back to the pdev) so callers can
     surface a real device name in the UI.
+
+    A device that exists but has no attached DRM clients reports an idle 0%
+    reading. None is returned only for durable failures (no Intel GPU, a bad
+    intel_gpu_device config, unreadable /proc, or a kernel that publishes no
+    counters), each of which logs a distinct warning, and the caller latches
+    it against retries for an hour.
     """
     from frigate.stats.intel_gpu_info import intel_gpu_name_resolver
 
     target_pdev = _resolve_intel_gpu_pdev(intel_gpu_device)
+    if intel_gpu_device and not target_pdev:
+        logger.warning(
+            "Unable to collect Intel GPU stats: configured intel_gpu_device %s "
+            "does not exist or could not be resolved to a PCI device",
+            intel_gpu_device,
+        )
+        return None
+
+    drm_devices = _enumerate_drm_devices()
+    intel_pdevs = {
+        pdev: driver
+        for pdev, driver in drm_devices.items()
+        if driver in _INTEL_DRM_DRIVERS
+    }
+
+    if not intel_pdevs:
+        logger.warning(
+            "Unable to collect Intel GPU stats: no Intel GPU (i915/xe) found in "
+            "/sys/class/drm. Check that the driver is loaded on the host"
+        )
+        return None
+
+    if target_pdev and target_pdev not in intel_pdevs:
+        logger.warning(
+            "Unable to collect Intel GPU stats: configured intel_gpu_device %s "
+            "resolved to %s (driver: %s), which is not an Intel GPU",
+            intel_gpu_device,
+            target_pdev,
+            drm_devices.get(target_pdev, "unknown"),
+        )
+        return None
 
     snapshot_a = _read_intel_drm_fdinfo(target_pdev)
+    if snapshot_a is None:
+        logger.warning("Unable to collect Intel GPU stats: /proc could not be read")
+        return None
+
     if not snapshot_a:
+        # No process currently holds the GPU open, e.g. while camera processes
+        # are restarting. The device is confirmed present, so report idle
+        # rather than an error; the next stats cycle re-samples normally.
+        logger.debug("No active DRM clients for Intel GPU, reporting idle")
+        return _idle_intel_gpu_stats(target_pdev, intel_pdevs)
+
+    if not any(client["engines"] for client in snapshot_a.values()):
+        # Clients exist but the kernel published no busyness for them, so
+        # there is nothing to sample and a second snapshot would not help.
+        # i915 suppresses per-client engine counters while GuC submission is
+        # active on kernels older than 6.5 (kernel commit 1324680a80eb lifted
+        # this), which covers stock Debian 12 and Ubuntu 22.04 on 12th gen
+        # and newer. It never publishes them for pre-Broadwell GPUs.
         logger.warning(
-            "Unable to collect Intel GPU stats: no DRM fdinfo entries found"
-            "%s. Check that /proc is readable and the i915/xe driver is loaded",
-            f" for pdev {target_pdev}" if target_pdev else "",
+            "Unable to collect Intel GPU stats: found %d DRM client(s) for %s but "
+            "the kernel reports no usage for them. GPUs older than Broadwell "
+            "(5th gen) are not supported. 12th gen and newer need kernel 6.5+",
+            len(snapshot_a),
+            "/".join(sorted({client["driver"] for client in snapshot_a.values()})),
         )
         return None
 
@@ -428,11 +574,17 @@ def get_intel_gpu_stats(
     elapsed_ns = (time.monotonic() - start) * 1e9
 
     snapshot_b = _read_intel_drm_fdinfo(target_pdev)
-    if not snapshot_b or elapsed_ns <= 0:
-        logger.warning(
-            "Unable to collect Intel GPU stats: second DRM fdinfo sample was empty"
-        )
+    if snapshot_b is None:
+        logger.warning("Unable to collect Intel GPU stats: /proc could not be read")
         return None
+
+    if not snapshot_b or elapsed_ns <= 0:
+        # Every client disappeared during the sample window; transient by
+        # definition, so report idle instead of latching an error.
+        logger.debug(
+            "No DRM clients persisted across Intel GPU samples, reporting idle"
+        )
+        return _idle_intel_gpu_stats(target_pdev, intel_pdevs)
 
     def _new_engine_pct() -> dict[str, float]:
         return {"render": 0.0, "video": 0.0, "video-enhance": 0.0, "compute": 0.0}
@@ -445,16 +597,23 @@ def get_intel_gpu_stats(
         if not data_a or data_a["driver"] != data_b["driver"]:
             continue
 
+        # Skip before the setdefault below so a counter-less client cannot
+        # register its pdev on its own.
+        if not data_b["engines"]:
+            continue
+
         pdev = key[0]
         engine_pct = per_pdev_engine_pct.setdefault(pdev, _new_engine_pct())
         pid_pct = per_pdev_pid_pct.setdefault(pdev, {})
 
         client_total = 0.0
-        for engine, (busy_b, total_b) in data_b["engines"].items():
+        for engine, (busy_b, total_b, capacity) in data_b["engines"].items():
             if engine not in engine_pct:
                 continue
 
-            busy_a, total_a = data_a["engines"].get(engine, (busy_b, total_b))
+            busy_a, total_a, _ = data_a["engines"].get(
+                engine, (busy_b, total_b, capacity)
+            )
 
             if data_b["driver"] == "i915":
                 delta = max(0, busy_b - busy_a)
@@ -464,7 +623,9 @@ def get_intel_gpu_stats(
                 delta_total = total_b - total_a
                 if delta_total <= 0:
                     continue
-                pct = min(100.0, delta_busy / delta_total * 100.0)
+                # Normalize by capacity so a class with N engine instances
+                # (busy summed across all N) reports 0-100%, not 0-N*100%.
+                pct = min(100.0, delta_busy / (delta_total * capacity) * 100.0)
 
             engine_pct[engine] += pct
             client_total += pct
@@ -472,11 +633,12 @@ def get_intel_gpu_stats(
         pid_pct[data_b["pid"]] = pid_pct.get(data_b["pid"], 0.0) + client_total
 
     if not per_pdev_engine_pct:
-        logger.warning(
-            "Unable to collect Intel GPU stats: no per-engine counters available "
-            "(i915 requires kernel >= 5.19)"
+        # Clients were seen in both snapshots but none persisted as the same
+        # (pdev, client-id, pid); process churn, so report idle.
+        logger.debug(
+            "No DRM clients persisted across Intel GPU samples, reporting idle"
         )
-        return None
+        return _idle_intel_gpu_stats(target_pdev, intel_pdevs)
 
     names = intel_gpu_name_resolver.get_names()
     results: dict[str, dict[str, Any]] = {}
@@ -823,6 +985,122 @@ def is_restricted_go2rtc_source(stream_source: str) -> bool:
     if not stream_source.strip().startswith(("echo:", "expr:", "exec:")):
         return False
     return not is_go2rtc_arbitrary_exec_allowed()
+
+
+# go2rtc expands an `ffmpeg:` source into an `exec:` command line built from its
+# `#key=value` parameters, so only parameters that map to fixed presets or plain
+# numbers are accepted from the API
+_GO2RTC_FFMPEG_NAME_PARAMS = frozenset({"video", "audio", "hardware"})
+_GO2RTC_FFMPEG_NUMERIC_PARAMS = frozenset(
+    {"width", "height", "rotate", "bitrate", "timeout"}
+)
+_GO2RTC_FFMPEG_FLAG_PARAMS = frozenset({"async"})
+# a preset or codec name, optionally with a sample rate (e.g. opus/16000)
+_GO2RTC_FFMPEG_NAME_VALUE = re.compile(r"^([A-Za-z0-9_]*|[A-Za-z0-9_]+/[0-9]{1,6})$")
+_GO2RTC_FFMPEG_NUMERIC_VALUE = re.compile(r"^-?[0-9]+[kKmM]?$")
+
+
+def _is_safe_go2rtc_ffmpeg_source(stream_source: str) -> bool:
+    """Check that an `ffmpeg:` source only uses allowlisted parameters."""
+    if any(c in stream_source for c in "'\"") or re.search(r"\s", stream_source):
+        return False
+
+    _, *params = stream_source.split("#")
+    for param in params:
+        key, has_value, value = param.partition("=")
+        if key in _GO2RTC_FFMPEG_NAME_PARAMS:
+            if not _GO2RTC_FFMPEG_NAME_VALUE.match(value):
+                return False
+        elif key in _GO2RTC_FFMPEG_NUMERIC_PARAMS:
+            if not _GO2RTC_FFMPEG_NUMERIC_VALUE.match(value):
+                return False
+        elif key in _GO2RTC_FFMPEG_FLAG_PARAMS:
+            if has_value:
+                return False
+        else:
+            return False
+
+    return True
+
+
+def is_restricted_go2rtc_api_source(stream_source: str) -> bool:
+    """Check if a stream source submitted through the API is restricted.
+
+    In addition to the echo/expr/exec sources, this restricts `ffmpeg:` sources
+    whose parameters could inject arbitrary ffmpeg arguments. The
+    GO2RTC_ALLOW_ARBITRARY_EXEC override lifts both restrictions.
+    """
+    source = stream_source.strip()
+    if is_restricted_go2rtc_source(source):
+        return True
+    if not source.startswith("ffmpeg:"):
+        return False
+    if _is_safe_go2rtc_ffmpeg_source(source[len("ffmpeg:") :]):
+        return False
+    return not is_go2rtc_arbitrary_exec_allowed()
+
+
+def _go2rtc_stream_sources(stream: Any) -> list[Any]:
+    return stream if isinstance(stream, list) else [stream]
+
+
+class Go2rtcStreamIssue(str, Enum):
+    """Why a go2rtc stream source was rejected."""
+
+    restricted = "restricted"
+    unknown_variable = "unknown_variable"
+    invalid_placeholder = "invalid_placeholder"
+
+
+def find_restricted_go2rtc_stream_changes(
+    old_streams: dict[str, Any] | None, new_streams: dict[str, Any] | None
+) -> dict[str, Go2rtcStreamIssue]:
+    """Return the go2rtc streams with new sources that must be rejected.
+
+    Used when the config is changed through the API. A source that is already
+    in the saved config for the same stream is left alone, so streams the
+    operator configured on disk keep working; any other source must resolve
+    its {FRIGATE_*} placeholders and pass `is_restricted_go2rtc_api_source`.
+    """
+    # imported here since frigate.config imports this module
+    from frigate.config.env import substitute_frigate_vars
+
+    old_streams = old_streams if isinstance(old_streams, dict) else {}
+    new_streams = new_streams if isinstance(new_streams, dict) else {}
+    issues: dict[str, Go2rtcStreamIssue] = {}
+
+    for name, stream in new_streams.items():
+        existing = _go2rtc_stream_sources(old_streams.get(name))
+
+        for source in _go2rtc_stream_sources(stream):
+            if source in existing:
+                continue
+
+            if not isinstance(source, str):
+                # the map form is only usable with arbitrary exec enabled
+                if is_go2rtc_arbitrary_exec_allowed():
+                    continue
+                issues[name] = Go2rtcStreamIssue.restricted
+                break
+
+            # only sources whose placeholders resolve here are accepted, so the
+            # resolved value checked below is what go2rtc loads at startup
+            try:
+                resolved_source = substitute_frigate_vars(source)
+            except KeyError:
+                issues[name] = Go2rtcStreamIssue.unknown_variable
+                break
+            except ValueError:
+                issues[name] = Go2rtcStreamIssue.invalid_placeholder
+                break
+
+            if is_restricted_go2rtc_api_source(
+                source
+            ) or is_restricted_go2rtc_api_source(resolved_source):
+                issues[name] = Go2rtcStreamIssue.restricted
+                break
+
+    return issues
 
 
 def ffprobe_stream(ffmpeg, path: str, detailed: bool = False) -> sp.CompletedProcess:

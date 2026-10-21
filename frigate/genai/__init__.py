@@ -23,6 +23,7 @@ from frigate.genai.prompts import (
     build_review_summary_prompt,
 )
 from frigate.models import Event
+from frigate.util.builtin import has_non_finite_number
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,15 @@ class GenAIClient:
                 except json.JSONDecodeError as je:
                     logger.error("Failed to parse review description JSON: %s", je)
                     return None
+
+                # model_construct skips validation, so non-finite numbers that
+                # the validated path would have rejected have to be caught here
+                if has_non_finite_number(raw):
+                    logger.error(
+                        "Discarding review description containing non-finite numbers."
+                    )
+                    return None
+
                 # observations and confidence are required on the model; fill an empty default
                 # if the response omitted it so attribute access stays safe.
                 raw.setdefault("observations", [])
@@ -279,6 +289,11 @@ class GenAIClient:
     @property
     def supports_toggleable_thinking(self) -> bool:
         """Whether the configured model exposes a per-request thinking toggle."""
+        return False
+
+    @property
+    def supports_embeddings(self) -> bool:
+        """Whether the configured model can generate embeddings via embed()."""
         return False
 
     def list_models(self) -> list[str]:

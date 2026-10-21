@@ -47,6 +47,25 @@ class TestHttpApp(BaseTestHttp):
             assert response.status_code == 200
             assert response.json()["front_door"]["usage_percent"] == 25.0
 
+    def test_camera_name_collision_keeps_admin_default(self):
+        self.minimal_config["cameras"]["faces"] = self.minimal_config["cameras"].pop(
+            "front_door"
+        )
+        app = super().create_app(enforce_default_admin=True)
+        viewer = {"remote-user": "viewer", "remote-role": "viewer"}
+
+        with AuthTestClient(app) as client:
+            assert client.get("/faces", headers=viewer).status_code == 403
+            assert client.get("/faces").status_code == 200
+            assert (
+                client.post("/faces/train/person/classify", headers=viewer).status_code
+                == 403
+            )
+
+            # Camera routes for the same name stay reachable by viewers
+            response = client.get("/faces/recordings/summary", headers=viewer)
+            assert response.status_code == 200
+
     def test_config_set_in_memory_replaces_objects_track_list(self):
         self.minimal_config["cameras"]["front_door"]["objects"] = {
             "track": ["person", "car"],
@@ -131,6 +150,77 @@ class TestHttpApp(BaseTestHttp):
                 "success": True,
                 "models": ["fake-model-a", "fake-model-b"],
             }
+
+    def test_genai_probe_resolves_sentinel_to_saved_api_key(self):
+        # After a save the UI's api_key field holds the redaction sentinel;
+        # the probe must substitute the saved key for the named entry instead
+        # of sending the literal sentinel to the provider (GH discussion 23754).
+        probed_keys: list[str | None] = []
+
+        class CapturingClient(GenAIClient):
+            def list_models(self):
+                probed_keys.append(self.genai_config.api_key)
+                return ["fake-model"]
+
+        self.minimal_config["genai"] = {
+            "llm": {
+                "provider": "openai",
+                "api_key": "sk-saved",
+                "base_url": "https://example.invalid",
+                "model": "fake-model",
+            }
+        }
+        app = super().create_app()
+
+        with (
+            AuthTestClient(app) as client,
+            patch.dict(
+                frigate.genai.PROVIDERS,
+                {GenAIProviderEnum.openai: CapturingClient},
+            ),
+        ):
+            response = client.post(
+                "/genai/probe",
+                json={
+                    "provider": "openai",
+                    "name": "llm",
+                    "api_key": REDACTED_CREDENTIAL_SENTINEL,
+                    "base_url": "https://example.invalid",
+                },
+            )
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+            assert probed_keys == ["sk-saved"]
+
+    def test_genai_probe_sentinel_without_saved_entry_sends_no_key(self):
+        # If the sentinel arrives for an entry that has no saved config, the
+        # probe must drop the key entirely rather than leak the sentinel.
+        probed_keys: list[str | None] = []
+
+        class CapturingClient(GenAIClient):
+            def list_models(self):
+                probed_keys.append(self.genai_config.api_key)
+                return ["fake-model"]
+
+        app = super().create_app()
+
+        with (
+            AuthTestClient(app) as client,
+            patch.dict(
+                frigate.genai.PROVIDERS,
+                {GenAIProviderEnum.openai: CapturingClient},
+            ),
+        ):
+            response = client.post(
+                "/genai/probe",
+                json={
+                    "provider": "openai",
+                    "name": "llm",
+                    "api_key": REDACTED_CREDENTIAL_SENTINEL,
+                },
+            )
+            assert response.status_code == 200
+            assert probed_keys == [None]
 
     def test_genai_probe_empty_list_is_treated_as_failure(self):
         # The plugin's list_models() returns [] on connection failure rather

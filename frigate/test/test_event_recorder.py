@@ -42,6 +42,10 @@ for name, orig in _originals.items():
         sys.modules[name] = orig
 
 
+def _utc_fromtimestamp(timestamp: float) -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
+
+
 def _ts_filename(dt: datetime.datetime) -> str:
     """Produce a filename matching the CACHE_SEGMENT_FORMAT pattern."""
     return dt.strftime(CACHE_SEGMENT_FORMAT) + ".mp4"
@@ -120,9 +124,7 @@ class _RecorderFixture(unittest.TestCase):
 
         with patch.object(ev, "DetectionSubscriber") as sub_cls:
             sub_cls.return_value = MagicMock()
-            recorder = ev.EventRecorder(
-                frigate_config, camera_configs, {}, stop_event
-            )
+            recorder = ev.EventRecorder(frigate_config, camera_configs, {}, stop_event)
         return recorder
 
     def _seed_buffer_file(
@@ -150,9 +152,9 @@ class TestIdlePrune(_RecorderFixture):
 
         now = time.time()
         # Three closed segments: two older than pre_capture, one "new".
-        old_dt = datetime.datetime.fromtimestamp(now - 60)
-        mid_dt = datetime.datetime.fromtimestamp(now - 30)
-        recent_dt = datetime.datetime.fromtimestamp(now - 1)
+        old_dt = _utc_fromtimestamp(now - 60)
+        mid_dt = _utc_fromtimestamp(now - 30)
+        recent_dt = _utc_fromtimestamp(now - 1)
 
         old = self._seed_buffer_file("cam1", old_dt)
         mid = self._seed_buffer_file("cam1", mid_dt)
@@ -170,7 +172,7 @@ class TestIdlePrune(_RecorderFixture):
         be older than the cutoff; we must never empty the buffer so a
         later trigger still has a pre-roll segment."""
         recorder = self._make_recorder(cameras=("cam1",), pre_capture=5)
-        long_ago = datetime.datetime.fromtimestamp(time.time() - 3600)
+        long_ago = _utc_fromtimestamp(time.time() - 3600)
         path = self._seed_buffer_file("cam1", long_ago)
 
         recorder._tick_buffers()
@@ -185,10 +187,10 @@ class TestTriggerPromotion(_RecorderFixture):
         )
         now = time.time()
 
-        dt1 = datetime.datetime.fromtimestamp(now - 8)
-        dt2 = datetime.datetime.fromtimestamp(now - 4)
+        dt1 = _utc_fromtimestamp(now - 8)
+        dt2 = _utc_fromtimestamp(now - 4)
         # Newest file — still being written — stays in the buffer.
-        dt3 = datetime.datetime.fromtimestamp(now - 1)
+        dt3 = _utc_fromtimestamp(now - 1)
         self._seed_buffer_file("cam1", dt1)
         self._seed_buffer_file("cam1", dt2)
         newest = self._seed_buffer_file("cam1", dt3)
@@ -202,10 +204,7 @@ class TestTriggerPromotion(_RecorderFixture):
 
         # Two older files promoted into CACHE_DIR with @main@ naming; the
         # newest (still being written) must stay in the buffer.
-        promoted = [
-            f for f in os.listdir(self.cache_dir)
-            if f.startswith("cam1@main@")
-        ]
+        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
         self.assertEqual(len(promoted), 2)
         self.assertTrue(os.path.exists(newest))
 
@@ -222,23 +221,18 @@ class TestTriggerPromotion(_RecorderFixture):
         state.last_activity_time = now  # still inside post window
 
         # One "ongoing" segment + a newest file still open.
-        dt_closed = datetime.datetime.fromtimestamp(now - 2)
-        dt_open = datetime.datetime.fromtimestamp(now - 0.1)
+        dt_closed = _utc_fromtimestamp(now - 2)
+        dt_open = _utc_fromtimestamp(now - 0.1)
         self._seed_buffer_file("cam1", dt_closed)
         self._seed_buffer_file("cam1", dt_open)
 
         recorder._tick_buffers()
 
-        promoted = [
-            f for f in os.listdir(self.cache_dir)
-            if f.startswith("cam1@main@")
-        ]
+        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
         self.assertEqual(len(promoted), 1)
 
     def test_returns_to_idle_after_post_capture_elapsed(self):
-        recorder = self._make_recorder(
-            cameras=("cam1",), pre_capture=2, post_capture=5
-        )
+        recorder = self._make_recorder(cameras=("cam1",), pre_capture=2, post_capture=5)
         now = time.time()
         state = recorder.camera_states["cam1"]
         state.is_active = True
@@ -246,12 +240,8 @@ class TestTriggerPromotion(_RecorderFixture):
         state.promoted_paths = {"/some/path"}
 
         # Seed a couple files so the idle branch has something to work on.
-        self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 3)
-        )
-        self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 1)
-        )
+        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 3))
+        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 1))
 
         recorder._tick_buffers()
 
@@ -264,9 +254,7 @@ class TestNoEventRecordingCamera(_RecorderFixture):
         """If no camera has event_recording.enabled, _tick_buffers on an
         empty buffer directory must not raise and must not write into
         CACHE_DIR."""
-        recorder = self._make_recorder(
-            cameras=("cam1",), event_recording_enabled=False
-        )
+        recorder = self._make_recorder(cameras=("cam1",), event_recording_enabled=False)
         # Nothing seeded -> nothing to promote or prune.
         recorder._tick_buffers()
         self.assertEqual(os.listdir(self.cache_dir), [])
@@ -287,8 +275,8 @@ class TestCameraWithAtInName(_RecorderFixture):
         state.is_active = True
         state.last_activity_time = now
 
-        dt_closed = datetime.datetime.fromtimestamp(now - 3)
-        dt_open = datetime.datetime.fromtimestamp(now - 0.1)
+        dt_closed = _utc_fromtimestamp(now - 3)
+        dt_open = _utc_fromtimestamp(now - 0.1)
         self._seed_buffer_file(camera, dt_closed)
         self._seed_buffer_file(camera, dt_open)
 
@@ -317,21 +305,14 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
 
         # Name-timestamp is T-5, but mtime is skewed forward by ~3 s to
         # simulate write-completion-time drift.
-        name_dt = datetime.datetime.fromtimestamp(now - 5)
-        self._seed_buffer_file(
-            "cam1", name_dt, mtime_override=now - 2
-        )
+        name_dt = _utc_fromtimestamp(now - 5)
+        self._seed_buffer_file("cam1", name_dt, mtime_override=now - 2)
         # Newest sentinel so the older one is considered closed.
-        self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 0.1)
-        )
+        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 0.1))
 
         recorder._tick_buffers()
 
-        promoted = [
-            f for f in os.listdir(self.cache_dir)
-            if f.startswith("cam1@main@")
-        ]
+        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
         self.assertEqual(len(promoted), 1)
         # Expected suffix mirrors the name_dt in CACHE_SEGMENT_FORMAT.
         expected_ts = name_dt.strftime(CACHE_SEGMENT_FORMAT)
@@ -348,18 +329,13 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
         state.is_active = True
         state.last_activity_time = now
 
-        name_dt = datetime.datetime.fromtimestamp(now - 5)
+        name_dt = _utc_fromtimestamp(now - 5)
         self._seed_buffer_file("cam1", name_dt)
-        self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 0.1)
-        )
+        self._seed_buffer_file("cam1", _utc_fromtimestamp(now - 0.1))
 
         recorder._tick_buffers()
 
-        promoted = [
-            f for f in os.listdir(self.cache_dir)
-            if f.startswith("cam1@main@")
-        ]
+        promoted = [f for f in os.listdir(self.cache_dir) if f.startswith("cam1@main@")]
         self.assertEqual(len(promoted), 1)
         # "cam1@main@<ts>.mp4" -> extract <ts>
         ts_part = promoted[0].split("@main@", 1)[1]
@@ -610,7 +586,9 @@ class TestStationaryRecordingThreshold(_RecorderFixture):
                 stationary_recording_threshold=10,
             ),
         }
-        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
         recorder.camera_configs["cam1"].objects.filters = filters
         recorder.camera_configs["cam1"].detect.fps = 5
         state = recorder.camera_states["cam1"]
@@ -638,7 +616,9 @@ class TestStationaryRecordingThreshold(_RecorderFixture):
                 stationary_recording_threshold=10,
             ),
         }
-        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
         recorder.camera_configs["cam1"].objects.filters = filters
         recorder.camera_configs["cam1"].detect.fps = 5
         state = recorder.camera_states["cam1"]
@@ -666,7 +646,9 @@ class TestStationaryRecordingThreshold(_RecorderFixture):
                 stationary_recording_threshold=None,
             ),
         }
-        recorder = self._make_recorder(cameras=("cam1",), pre_capture=5, post_capture=10)
+        recorder = self._make_recorder(
+            cameras=("cam1",), pre_capture=5, post_capture=10
+        )
         recorder.camera_configs["cam1"].objects.filters = filters
         recorder.camera_configs["cam1"].detect.fps = 5
         state = recorder.camera_states["cam1"]
@@ -773,8 +755,8 @@ class TestStationaryGracePeriodSemantics(unittest.TestCase):
                 stationary_recording_threshold=15,
             ),
         }
-        self.assertTrue(self._active(10, filters))   # inside grace period
-        self.assertTrue(self._active(75, filters))   # exactly at threshold
+        self.assertTrue(self._active(10, filters))  # inside grace period
+        self.assertTrue(self._active(75, filters))  # exactly at threshold
         self.assertTrue(self._active(5_000, filters))  # long past it
 
     def test_moving_object_always_active(self):

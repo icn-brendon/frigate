@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import os
 import random
 import string
 import time
@@ -9,11 +10,12 @@ import zipfile
 from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
+from urllib.parse import quote
 
 import psutil
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pathvalidate import sanitize_filename, sanitize_filepath
+from pathvalidate import sanitize_filename
 from peewee import DoesNotExist
 from playhouse.shortcuts import model_to_dict
 
@@ -55,6 +57,7 @@ from frigate.api.defs.response.export_response import (
 )
 from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
+from frigate.api.media_auth import deny_response_for_media_uri
 from frigate.const import CLIPS_DIR, EXPORT_DIR
 from frigate.jobs.export import (
     ExportJob,
@@ -68,11 +71,13 @@ from frigate.jobs.export import (
 from frigate.models import Export, ExportCase, Previews, Recordings
 from frigate.record.export import (
     DEFAULT_TIME_LAPSE_FFMPEG_ARGS,
+    DEFAULT_TIME_LAPSE_FFMPEG_INPUT_ARGS,
     ChaptersEnum,
     ExportQualityEnum,
     PlaybackSourceEnum,
     validate_ffmpeg_args,
 )
+from frigate.util.path import sanitize_contained_path
 from frigate.util.time import is_current_hour
 
 logger = logging.getLogger(__name__)
@@ -128,20 +133,24 @@ def _validate_export_case(export_case_id: str | None) -> JSONResponse | None:
 
 
 def _sanitize_existing_image(
+    request: Request,
     image_path: str | None,
 ) -> tuple[str | None, JSONResponse | None]:
-    # sanitize_filepath normalizes "\" to "/" but leaves ".." intact, so a path
-    # like "clips\..\..\etc/passwd" passes the CLIPS_DIR prefix check yet still
-    # escapes the directory once resolved. A valid snapshot path never uses "..".
-    if image_path and ".." in image_path:
-        return None, JSONResponse(
-            content={"success": False, "message": "Invalid image path"},
-            status_code=400,
-        )
+    if not image_path:
+        return None, None
 
-    existing_image = sanitize_filepath(image_path) if image_path else None
+    existing_image = sanitize_contained_path(image_path, CLIPS_DIR)
 
-    if existing_image and not existing_image.startswith(CLIPS_DIR):
+    # CLIPS_DIR is shared by every camera, so the caller must also be allowed
+    # to read the image.
+    if existing_image is not None and deny_response_for_media_uri(
+        f"/clips/{quote(os.path.relpath(existing_image, CLIPS_DIR))}",
+        request.headers.get("remote-role"),
+        request.app.frigate_config,
+    ):
+        existing_image = None
+
+    if existing_image is None:
         return None, JSONResponse(
             content={"success": False, "message": "Invalid image path"},
             status_code=400,
@@ -461,6 +470,22 @@ def _stream_case_archive(exports: list[Export]) -> Iterator[bytes]:
     yield from buffer.drain()
 
 
+def _content_disposition(filename: str, ascii_fallback: str) -> str:
+    """Build an attachment Content-Disposition that survives non-ASCII names.
+
+    Header values are encoded as latin-1, so a name outside that range cannot
+    go in filename at all. RFC 6266 handles this with a pair: a plain ASCII
+    filename for old clients, plus a percent-encoded UTF-8 filename* that
+    every current browser prefers.
+    """
+    ascii_name = filename if filename.isascii() else ascii_fallback
+
+    return (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
+
+
 @router.get(
     "/cases/{case_id}/download",
     dependencies=[Depends(allow_any_authenticated())],
@@ -503,7 +528,9 @@ def download_export_case(
         _stream_case_archive(exports),
         media_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{archive_base}.zip"',
+            "Content-Disposition": _content_disposition(
+                f"{archive_base}.zip", f"{case_id}.zip"
+            ),
         },
     )
 
@@ -668,7 +695,7 @@ def export_recordings_batch(
     sanitized_images: list[str | None] = []
     for item in body.items:
         existing_image, image_validation_error = _sanitize_existing_image(
-            item.image_path
+            request, item.image_path
         )
         if image_validation_error is not None:
             return image_validation_error
@@ -816,7 +843,9 @@ def export_recording(
 
     playback_source = body.source
     friendly_name = body.name
-    existing_image, image_validation_error = _sanitize_existing_image(body.image_path)
+    existing_image, image_validation_error = _sanitize_existing_image(
+        request, body.image_path
+    )
     if image_validation_error is not None:
         return image_validation_error
 
@@ -955,7 +984,9 @@ def export_recording_custom(
 
     playback_source = body.source
     friendly_name = body.name
-    existing_image, image_validation_error = _sanitize_existing_image(body.image_path)
+    existing_image, image_validation_error = _sanitize_existing_image(
+        request, body.image_path
+    )
     if image_validation_error is not None:
         return image_validation_error
     ffmpeg_input_args = body.ffmpeg_input_args
@@ -1003,7 +1034,7 @@ def export_recording_custom(
 
     # Set default values if not provided (timelapse defaults)
     if ffmpeg_input_args is None:
-        ffmpeg_input_args = ""
+        ffmpeg_input_args = DEFAULT_TIME_LAPSE_FFMPEG_INPUT_ARGS
 
     if ffmpeg_output_args is None:
         ffmpeg_output_args = DEFAULT_TIME_LAPSE_FFMPEG_ARGS

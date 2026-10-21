@@ -133,8 +133,9 @@ function StatusAlertNav({ className, large }: StatusAlertNavProps) {
 
   useEffect(() => {
     if (reindexState) {
-      if (reindexState.status == "indexing") {
-        clearMessages("embeddings-reindex");
+      clearMessages("embeddings-reindex");
+
+      if (reindexState.status === "indexing") {
         addMessage(
           "embeddings-reindex",
           t("stats.reindexingEmbeddings", {
@@ -144,9 +145,8 @@ function StatusAlertNav({ className, large }: StatusAlertNavProps) {
             ),
           }),
         );
-      }
-      if (reindexState.status === "completed") {
-        clearMessages("embeddings-reindex");
+      } else if (reindexState.status === "failed") {
+        addMessage("embeddings-reindex", t("stats.reindexEmbeddingsFailed"));
       }
     }
   }, [reindexState, addMessage, clearMessages, t]);
@@ -174,11 +174,11 @@ function StatusAlertNav({ className, large }: StatusAlertNavProps) {
       </DrawerTrigger>
       <DrawerContent
         className={cn(
-          "mx-1 max-h-[75dvh] overflow-hidden rounded-t-2xl px-2",
+          "mx-1 max-h-[75dvh] overflow-hidden rounded-t-2xl",
           className,
         )}
       >
-        <div className="scrollbar-container flex h-auto w-full flex-col items-center gap-2 overflow-y-auto overflow-x-hidden py-4">
+        <div className="scrollbar-container flex h-auto w-full flex-col items-center gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
           {Object.entries(messages).map(([key, messageArray]) => (
             <div key={key} className="flex w-full items-center gap-2">
               {messageArray.map(({ id, text, color, link }: StatusMessage) => {

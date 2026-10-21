@@ -29,7 +29,7 @@
         },
         "listen": {
             "label": "Tipus d'escoltes",
-            "description": "Llista de tipus d'esdeveniment d'àudio a detectar (per exemple: escorça, focarmalarma, parla, crida)."
+            "description": "Llista de tipus d'esdeveniment d'àudio a detectar (per exemple: Lladruc, foc_alarma, parla, crida)."
         },
         "filters": {
             "label": "Filtres d'àudio",
@@ -493,6 +493,9 @@
             "max_concurrent": {
                 "label": "Màxim d'exportacions concurrents",
                 "description": "Nombre màxim de treballs d'exportació a processar al mateix temps."
+            },
+            "chapters": {
+                "label": "Metadades de capítol per incrustar en els enregistraments exportats"
             }
         },
         "preview": {
@@ -561,7 +564,7 @@
         },
         "genai": {
             "label": "Configuració del GenAI",
-            "description": "Controla l'ús de la IA generativa per a la producció de descripcions i resums d'articles de revisió.",
+            "description": "Controla l'ús de la IA generativa per a la producció de descripcions i resums d'elements de revisió.",
             "enabled": {
                 "label": "Habilita les descripcions del GenAI",
                 "description": "Activa o desactiva les descripcions i resums generats per GenAI per als elements de revisió."
@@ -864,8 +867,8 @@
             "description": "Ordre numèric utilitzat per ordenar la càmera a la interfície d'usuari (taulell de control i llistes per defecte); els nombres més grans apareixen més tard."
         },
         "dashboard": {
-            "label": "Mostra a l'interfície d'usuari",
-            "description": "Estableix si aquesta càmera és visible a tot arreu a la interfície d'usuari de la Frigate. Desactivar això requerirà editar manualment la configuració per tornar a veure aquesta càmera a la interfície d'usuari."
+            "label": "Mostra al tauler en directe",
+            "description": "Alterna si aquesta càmera és visible al tauler de control en directe de totes les càmeres per defecte. La càmera roman disponible a tot arreu a la interfície d'usuari, inclosos els grups i la configuració de la càmera."
         },
         "review": {
             "label": "Mostra en la revisió",

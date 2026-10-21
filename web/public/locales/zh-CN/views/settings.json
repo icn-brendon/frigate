@@ -1388,7 +1388,7 @@
         "webuiUrlHelp": "从调试页面中直接访问摄像头管理网页界面。留空以禁用链接。",
         "webuiUrlInvalid": "必须是有效的 URL（例如：https://example.com）。",
         "dashboardLabel": "在实时监控面板上显示",
-        "dashboardHelp": "在实时监控面板显示该摄像头。",
+        "dashboardHelp": "在实时监控面板显示该摄像头，在分组等其他位置仍可见。",
         "reviewLabel": "在核查中显示",
         "reviewHelp": "在核查页面展示该摄像头，包括在筛选列表、画面变动核查以及历史视图。"
       },
@@ -1655,7 +1655,14 @@
       "keyLabel": "键",
       "valueLabel": "值",
       "keyPlaceholder": "新键名",
-      "remove": "移除"
+      "remove": "移除",
+      "providerNameLabel": "提供商名称",
+      "providerNamePlaceholder": "例如：openai、deepseek",
+      "variableNameLabel": "变量名",
+      "variableNamePlaceholder": "例如：MY_VARIABLE",
+      "loggerNameLabel": "日志模块名称",
+      "loggerNamePlaceholder": "例如：frigate.record",
+      "keyPatternError": "只能使用字母、数字、连字符和下划线（不包含空格）"
     },
     "roleMap": {
       "empty": "未配置权限组映射",
@@ -2078,7 +2085,7 @@
       "genaiImageSourceRecordingsRecordDisabled": "图像源虽然设置为“录制”，但录制功能已关闭。Frigate 将自动降级使用预览图片。"
     },
     "lpr": {
-      "vehicleNotTracked": "车牌识别需要先开启对 “汽车” 或 “摩托车” 的目标追踪。请在该摄像头的检测目标中添加“汽车”或“摩托车”。",
+      "vehicleNotTracked": "车牌识别需要先追踪到车辆才能工作。请在该摄像头的检测目标中添加“汽车”或其他类型的车辆目标。",
       "globalDisabled": "要让该摄像头的车牌识别功能正常使用，必须先开启车牌识别增强功能。",
       "modelSizeLarge": "大型模型针对多行格式车牌做了优化。小型模型的性能优于大型模型，而且只有小型模型才能支持中文车牌。除非你所在地区使用多行车牌格式，否则建议使用小型模型。"
     },
@@ -2127,7 +2134,8 @@
       "autotrackingNoZones": "自动追踪至少需要一个区域。请先在“遮罩 / 区域”中为此摄像头定义一个区域，然后在下方将其设置为必需区域。"
     },
     "ffmpeg": {
-      "hwaccelManualNotRecommended": "不建议手动硬件加速参数。除非存在特定需求，否则选择与你的硬件匹配的预设。"
+      "hwaccelManualNotRecommended": "不建议手动硬件加速参数。除非存在特定需求，否则选择与你的硬件匹配的预设。",
+      "inputsMissingGo2rtcStream": "下面的输入指向了一个已不存在的 go2rtc 转流。请选择一个现有的转流或手动输入摄像头的 URL，否则此摄像头将无法连接。"
     },
     "model": {
       "optimizedFor320": "Frigate 针对了 320x320 的模型进行优化，这是大多数设置的最佳选择。640x640 模型速度较慢，仅在特定场景下有帮助。",
@@ -2174,7 +2182,7 @@
   },
   "review": {
     "imageSource": {
-      "recordings": "录制文件",
+      "recordings": "录制",
       "previews": "预览"
     }
   },

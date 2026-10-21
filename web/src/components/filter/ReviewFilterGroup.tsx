@@ -26,6 +26,7 @@ import PlatformAwareDialog from "../overlay/dialog/PlatformAwareDialog";
 import { useTranslation } from "react-i18next";
 import { getTranslatedLabel } from "@/utils/i18n";
 import { useAllowedCameras } from "@/hooks/use-allowed-cameras";
+import { cn } from "@/lib/utils";
 
 const REVIEW_FILTERS = [
   "cameras",
@@ -257,6 +258,7 @@ export default function ReviewFilterGroup({
           // not applicable as exports are not used
           camera=""
           latestTime={0}
+          earliestTime={0}
           currentTime={0}
           mode="none"
           setMode={() => {}}
@@ -409,6 +411,7 @@ function GeneralFilterButton({
         onUpdateFilter(resetFilter);
       }}
       onClose={() => setOpen(false)}
+      contentClassName="p-4"
     />
   );
 
@@ -416,6 +419,7 @@ function GeneralFilterButton({
     <PlatformAwareDialog
       trigger={trigger}
       content={content}
+      contentClassName="p-1"
       open={open}
       onOpenChange={(open) => {
         if (!open) {
@@ -444,6 +448,7 @@ type GeneralFilterContentProps = {
   onApply: () => void;
   onReset: () => void;
   onClose: () => void;
+  contentClassName?: string;
 };
 export function GeneralFilterContent({
   allLabels,
@@ -454,6 +459,7 @@ export function GeneralFilterContent({
   onApply,
   onReset,
   onClose,
+  contentClassName,
 }: GeneralFilterContentProps) {
   const { t } = useTranslation(["components/filter", "views/events"]);
   const { data: config } = useSWR<FrigateConfig>("config", {
@@ -476,7 +482,12 @@ export function GeneralFilterContent({
   }, [config]);
   return (
     <>
-      <div className="scrollbar-container h-auto max-h-[80dvh] overflow-y-auto overflow-x-hidden">
+      <div
+        className={cn(
+          "scrollbar-container h-auto max-h-[80dvh] overflow-y-auto overflow-x-hidden",
+          contentClassName,
+        )}
+      >
         {currentSeverity && (
           <div className="my-2.5 flex flex-col gap-2.5">
             <FilterSwitch
