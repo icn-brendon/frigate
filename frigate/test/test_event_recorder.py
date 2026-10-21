@@ -42,6 +42,10 @@ for name, orig in _originals.items():
         sys.modules[name] = orig
 
 
+def _utc_fromtimestamp(timestamp: float) -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
+
+
 def _ts_filename(dt: datetime.datetime) -> str:
     """Produce a filename matching the CACHE_SEGMENT_FORMAT pattern."""
     return dt.strftime(CACHE_SEGMENT_FORMAT) + ".mp4"
@@ -150,9 +154,9 @@ class TestIdlePrune(_RecorderFixture):
 
         now = time.time()
         # Three closed segments: two older than pre_capture, one "new".
-        old_dt = datetime.datetime.fromtimestamp(now - 60)
-        mid_dt = datetime.datetime.fromtimestamp(now - 30)
-        recent_dt = datetime.datetime.fromtimestamp(now - 1)
+        old_dt = _utc_fromtimestamp(now - 60)
+        mid_dt = _utc_fromtimestamp(now - 30)
+        recent_dt = _utc_fromtimestamp(now - 1)
 
         old = self._seed_buffer_file("cam1", old_dt)
         mid = self._seed_buffer_file("cam1", mid_dt)
@@ -170,7 +174,7 @@ class TestIdlePrune(_RecorderFixture):
         be older than the cutoff; we must never empty the buffer so a
         later trigger still has a pre-roll segment."""
         recorder = self._make_recorder(cameras=("cam1",), pre_capture=5)
-        long_ago = datetime.datetime.fromtimestamp(time.time() - 3600)
+        long_ago = _utc_fromtimestamp(time.time() - 3600)
         path = self._seed_buffer_file("cam1", long_ago)
 
         recorder._tick_buffers()
@@ -185,10 +189,10 @@ class TestTriggerPromotion(_RecorderFixture):
         )
         now = time.time()
 
-        dt1 = datetime.datetime.fromtimestamp(now - 8)
-        dt2 = datetime.datetime.fromtimestamp(now - 4)
+        dt1 = _utc_fromtimestamp(now - 8)
+        dt2 = _utc_fromtimestamp(now - 4)
         # Newest file — still being written — stays in the buffer.
-        dt3 = datetime.datetime.fromtimestamp(now - 1)
+        dt3 = _utc_fromtimestamp(now - 1)
         self._seed_buffer_file("cam1", dt1)
         self._seed_buffer_file("cam1", dt2)
         newest = self._seed_buffer_file("cam1", dt3)
@@ -222,8 +226,8 @@ class TestTriggerPromotion(_RecorderFixture):
         state.last_activity_time = now  # still inside post window
 
         # One "ongoing" segment + a newest file still open.
-        dt_closed = datetime.datetime.fromtimestamp(now - 2)
-        dt_open = datetime.datetime.fromtimestamp(now - 0.1)
+        dt_closed = _utc_fromtimestamp(now - 2)
+        dt_open = _utc_fromtimestamp(now - 0.1)
         self._seed_buffer_file("cam1", dt_closed)
         self._seed_buffer_file("cam1", dt_open)
 
@@ -247,10 +251,10 @@ class TestTriggerPromotion(_RecorderFixture):
 
         # Seed a couple files so the idle branch has something to work on.
         self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 3)
+            "cam1", _utc_fromtimestamp(now - 3)
         )
         self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 1)
+            "cam1", _utc_fromtimestamp(now - 1)
         )
 
         recorder._tick_buffers()
@@ -287,8 +291,8 @@ class TestCameraWithAtInName(_RecorderFixture):
         state.is_active = True
         state.last_activity_time = now
 
-        dt_closed = datetime.datetime.fromtimestamp(now - 3)
-        dt_open = datetime.datetime.fromtimestamp(now - 0.1)
+        dt_closed = _utc_fromtimestamp(now - 3)
+        dt_open = _utc_fromtimestamp(now - 0.1)
         self._seed_buffer_file(camera, dt_closed)
         self._seed_buffer_file(camera, dt_open)
 
@@ -317,13 +321,13 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
 
         # Name-timestamp is T-5, but mtime is skewed forward by ~3 s to
         # simulate write-completion-time drift.
-        name_dt = datetime.datetime.fromtimestamp(now - 5)
+        name_dt = _utc_fromtimestamp(now - 5)
         self._seed_buffer_file(
             "cam1", name_dt, mtime_override=now - 2
         )
         # Newest sentinel so the older one is considered closed.
         self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 0.1)
+            "cam1", _utc_fromtimestamp(now - 0.1)
         )
 
         recorder._tick_buffers()
@@ -348,10 +352,10 @@ class TestFilenameTimestampRoundtrip(_RecorderFixture):
         state.is_active = True
         state.last_activity_time = now
 
-        name_dt = datetime.datetime.fromtimestamp(now - 5)
+        name_dt = _utc_fromtimestamp(now - 5)
         self._seed_buffer_file("cam1", name_dt)
         self._seed_buffer_file(
-            "cam1", datetime.datetime.fromtimestamp(now - 0.1)
+            "cam1", _utc_fromtimestamp(now - 0.1)
         )
 
         recorder._tick_buffers()

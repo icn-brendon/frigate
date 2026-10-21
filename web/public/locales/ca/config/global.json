@@ -380,6 +380,9 @@
             "max_concurrent": {
                 "label": "Màxim d'exportacions concurrents",
                 "description": "Nombre màxim de treballs d'exportació a processar al mateix temps."
+            },
+            "chapters": {
+                "label": "Metadades de capítol per incrustar en els enregistraments exportats"
             }
         },
         "preview": {
@@ -430,7 +433,7 @@
                 "label": "Estat original de GenAI"
             },
             "label": "Configuració del GenAI",
-            "description": "Controla l'ús de la IA generativa per a la producció de descripcions i resums d'articles de revisió.",
+            "description": "Controla l'ús de la IA generativa per a la producció de descripcions i resums d'elements de revisió.",
             "enabled": {
                 "label": "Habilita les descripcions del GenAI",
                 "description": "Activa o desactiva les descripcions i resums generats per GenAI per als elements de revisió."
@@ -1917,7 +1920,7 @@
             },
             "model_type": {
                 "label": "Tipus de Model de detecció d'objecte",
-                "description": "Tipus d'arquitectura del model de detector (ssd, yolox, yolonas) usat per l'optimització d'alguns detectors."
+                "description": "Tipus d'arquitectura del model de detector (ssd, yolox, yolonas, yolo-generic, rfdetr, dfine) utilitzat per alguns detectors per a l'optimització"
             }
         },
         "model_path": {
@@ -1966,7 +1969,7 @@
         },
         "model_type": {
             "label": "Tipus de model de detecció d'objectes",
-            "description": "Tipus d'arquitectura del model de detector (ssd, yolox, yolonas) utilitzat per alguns detectors per a l'optimització."
+            "description": "Tipus d'arquitectura del model de detector (ssd, yolox, yolonas, yolo-generic, rfdetr, dfine) utilitzat per alguns detectors per a l'optimització."
         }
     },
     "genai": {
@@ -2018,7 +2021,7 @@
         },
         "listen": {
             "label": "Tipus d'escoltes",
-            "description": "Llista de tipus d'esdeveniment d'àudio a detectar (per exemple: escorça, focarmalarma, parla, crida)."
+            "description": "Llista de tipus d'esdeveniment d'àudio a detectar (per exemple: Lladruc, foc_alarma, parla, crida)."
         },
         "filters": {
             "label": "Filtres d'àudio",
@@ -2335,8 +2338,8 @@
             "description": "Ordre numèric utilitzat per ordenar la càmera a la interfície d'usuari (taulell de control i llistes per defecte); els nombres més grans apareixen més tard."
         },
         "dashboard": {
-            "label": "Mostra a la interfície",
-            "description": "Estableix si aquesta càmera és visible a tot arreu a la interfície d'usuari de Frigate. Desactivar això requerirà editar manualment la configuració per tornar a veure aquesta càmera a la interfície d'usuari."
+            "label": "Mostra al tauler en directe",
+            "description": "Alterna si aquesta càmera és visible al tauler de control en directe de totes les càmeres per defecte. La càmera roman disponible a tot arreu a la interfície d'usuari, inclosos els grups i la configuració de la càmera."
         },
         "review": {
             "label": "Mostra en la revisió",

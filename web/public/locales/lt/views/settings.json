@@ -28,7 +28,10 @@
     "triggers": "Trigeriai",
     "roles": "Rolės",
     "cameraManagement": "Valdymas",
-    "cameraReview": "Peržiūra"
+    "cameraReview": "Peržiūra",
+    "profiles": "Profiliai",
+    "integrationLpr": "Registracijos numerių atpažinimas",
+    "cameraLpr": "Registracijos numerių atpažinimas"
   },
   "dialog": {
     "unsavedChanges": {
@@ -543,7 +546,7 @@
           "admin": "Admin",
           "adminDesc": "Pilna prieiga prie visų funkcijų.",
           "viewer": "Žiūrovas",
-          "viewerDesc": "Leidžiama prie Tiesioginio vaizdo tinklelio, Peržiūrų, Paieškų ir Eksportavimo funkcijų.",
+          "viewerDesc": "Leidžiama prie Tiesioginio vaizdo tinklelio, Peržiūrų, Paieškų ir Išrašų funkcijų.",
           "customDesc": "Specializuota rolė su prieiga prie konkrečios kameros."
         }
       }
@@ -748,7 +751,7 @@
     "snapshotConfig": {
       "title": "Momentinių kadrų Konfiguravimas",
       "desc": "Pateikti į Frigate+ reikalauja abiejų, momentinių kadrų ir <code>švarios_kopijos</code>momentinių kadrų įjungimo jūsų konfiguracijoje.",
-      "cleanCopyWarning": "Kai kurios kameros turi momentinius kadrus įjungtus tačiau švari kopija išjungta. Turite įjungti <code>švarią_kopiją</code> savo momentinės kopijos nustatymuose, kad galėtumėte teikti paveikslėlius į Frigate+.",
+      "cleanCopyWarning": "Kai kurios kameros turi momentinius kadrus išjungtus",
       "table": {
         "camera": "Kamera",
         "snapshots": "Momentiniai Kadrai",
@@ -1002,6 +1005,24 @@
       "estimatedBandwidth": "Tikėtinas Greitis",
       "roles": "Rolės",
       "ffmpegModule": "Naudoti srauto pritaikymo rėžimą"
+    }
+  },
+  "cameraManagement": {
+    "deleteCameraDialog": {
+      "deleteExports": "Taip pat ištrinti išrašus šiai kamerai"
+    },
+    "streams": {
+      "saved": "Išsaugota"
+    }
+  },
+  "maintenance": {
+    "sync": {
+      "exports": "Išrašus"
+    }
+  },
+  "birdseye": {
+    "cameraOrder": {
+      "saved": "Išsaugota"
     }
   }
 }

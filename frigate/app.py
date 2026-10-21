@@ -30,6 +30,7 @@ from frigate.comms.ws import WebSocketClient
 from frigate.comms.zmq_proxy import ZmqProxy
 from frigate.config.camera.updater import CameraConfigUpdatePublisher
 from frigate.config.config import FrigateConfig
+from frigate.config.holder import ConfigHolder
 from frigate.config.profile_manager import ProfileManager
 from frigate.const import (
     CACHE_DIR,
@@ -102,27 +103,25 @@ class FrigateApp:
         self.detection_shms: list[mp.shared_memory.SharedMemory] = []
         self.log_queue: Queue = mp.Queue()
         self.camera_metrics: DictProxy = self.metrics_manager.dict()
-        self.embeddings_metrics: DataProcessorMetrics | None = (
-            DataProcessorMetrics(
-                self.metrics_manager, list(config.classification.custom.keys())
-            )
-            if (
-                config.semantic_search.enabled
-                or any(
-                    c.objects.genai.enabled or c.review.genai.enabled
-                    for c in config.cameras.values()
-                )
-                or config.lpr.enabled
-                or config.face_recognition.enabled
-                or len(config.classification.custom) > 0
-            )
-            else None
+
+        self.embeddings_metrics = DataProcessorMetrics(
+            self.metrics_manager, list(config.classification.custom.keys())
         )
         self.ptz_metrics: dict[str, PTZMetrics] = {}
         self.processes: dict[str, int] = {}
         self.embeddings: EmbeddingsContext | None = None
-        self.profile_manager: ProfileManager | None = None
-        self.config = config
+        self.config_holder = ConfigHolder(config)
+
+    @property
+    def config(self) -> FrigateConfig:
+        """The current config, not the one Frigate booted with.
+
+        Read through the holder so the deferred watchdog factories below build
+        a replacement process from the config as it is now. There is no setter
+        on purpose: a plain attribute would let a caller pin this back to a
+        single object and reintroduce the staleness.
+        """
+        return self.config_holder.config
 
     def ensure_dirs(self) -> None:
         dirs = [
@@ -270,7 +269,7 @@ class FrigateApp:
                 10
                 * len([c for c in self.config.cameras.values() if c.enabled_in_config]),
             ),
-            load_vec_extension=self.config.semantic_search.enabled,
+            load_vec_extension=True,
         )
         models = [
             Event,
@@ -342,25 +341,6 @@ class FrigateApp:
             self.config, self.inter_config_updater, self.dispatcher
         )
         self.dispatcher.profile_manager = self.profile_manager
-
-    def restore_active_profile(self) -> None:
-        """Re-activate the persisted profile after subscribers are connected.
-
-        ZMQ PUB/SUB drops messages with no subscribers, so activation must
-        run after every config_updater subscriber is up.
-        """
-        if self.profile_manager is None:
-            return
-
-        persisted = ProfileManager.load_persisted_profile()
-        if persisted and any(
-            persisted in cam.profiles for cam in self.config.cameras.values()
-        ):
-            logger.info("Restoring persisted profile '%s'", persisted)
-            # runtime overrides are layered on top via restore_runtime_state()
-            self.profile_manager.activate_profile(
-                persisted, clear_runtime_overrides=False
-            )
 
     def start_detectors(self) -> None:
         for name in self.config.cameras.keys():
@@ -610,6 +590,13 @@ class FrigateApp:
         self.start_detectors()
         self.init_dispatcher()
         self.init_profile_manager()
+
+        # workers get a copy of the config and can miss the broadcast below, so
+        # apply both layers here. must stay after init_profile_manager(), which
+        # snapshots the base config that profile deactivation resets to
+        self.profile_manager.restore_persisted_profile_to_config()
+        self.dispatcher.reapply_runtime_state_to_config()
+
         self.init_embeddings_client()
         self.start_video_output_processor()
         self.start_ptz_autotracker()
@@ -624,8 +611,9 @@ class FrigateApp:
         self.start_record_cleanup()
         self.start_watchdog()
 
-        # restore persisted runtime overrides on top of config
-        self.restore_active_profile()
+        # publish for the recording/review/embeddings processes, which start
+        # before the config can be corrected, and for the retained MQTT states
+        self.profile_manager.restore_persisted_profile()
         self.dispatcher.restore_runtime_state()
 
         self.init_auth()
@@ -645,6 +633,7 @@ class FrigateApp:
                     self.replay_manager,
                     self.dispatcher,
                     self.profile_manager,
+                    config_holder=self.config_holder,
                 ),
                 host="127.0.0.1",
                 port=5001,

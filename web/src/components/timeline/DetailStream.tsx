@@ -727,6 +727,7 @@ function EventList({
                     <div className="text-sm text-secondary-foreground">
                       <Link
                         to={`/explore?recognized_license_plate=${event.data.recognized_license_plate}`}
+                        state={{ canGoBack: true }}
                         className="text-sm"
                       >
                         {event.data.recognized_license_plate}
@@ -1032,7 +1033,7 @@ function ObjectTimeline({
         data: {
           ...event.data,
           zones_friendly_names: event.data?.zones?.map((zone) =>
-            resolveZoneName(config, zone),
+            resolveZoneName(config, zone, event.camera),
           ),
         },
       }));

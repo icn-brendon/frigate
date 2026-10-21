@@ -78,7 +78,7 @@ export default function ZoneEditPane({
     }
 
     return Object.values(config.cameras)
-      .filter((conf) => conf.ui.dashboard && conf.enabled_in_config)
+      .filter((conf) => conf.enabled_in_config)
       .sort((aConf, bConf) => aConf.ui.order - bConf.ui.order);
   }, [config]);
 
@@ -108,7 +108,11 @@ export default function ZoneEditPane({
     }
     const inRequiredZones =
       cam.review.alerts.required_zones.includes(polygon.name) ||
-      cam.review.detections.required_zones.includes(polygon.name);
+      cam.review.detections.required_zones.includes(polygon.name) ||
+      cam.objects.genai.required_zones.includes(polygon.name) ||
+      cam.snapshots.required_zones.includes(polygon.name) ||
+      cam.mqtt.required_zones.includes(polygon.name) ||
+      cam.onvif.autotracking.required_zones.includes(polygon.name);
     const hasProfileOverride = Object.values(cam.profiles ?? {}).some(
       (profile) => profile?.zones && polygon.name in profile.zones,
     );

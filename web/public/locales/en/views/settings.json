@@ -463,7 +463,7 @@
     "deleteCameraDialog": {
       "title": "Delete Camera",
       "description": "Deleting a camera will permanently remove all recordings, tracked objects, and configuration for that camera. Any go2rtc streams associated with this camera may still need to be manually removed.",
-      "selectPlaceholder": "Choose camera...",
+      "selectPlaceholder": "Choose camera…",
       "confirmTitle": "Are you sure?",
       "confirmWarning": "Deleting <strong>{{cameraName}}</strong> cannot be undone.",
       "deleteExports": "Also delete exports for this camera",
@@ -499,7 +499,7 @@
         "webuiUrlHelp": "URL to visit the camera's web UI directly from the Debug view. Leave blank to disable the link.",
         "webuiUrlInvalid": "Must be a valid URL (e.g., https://example.com).",
         "dashboardLabel": "Show on Live dashboard",
-        "dashboardHelp": "Show this camera on the Live dashboard.",
+        "dashboardHelp": "Show this camera on the default All Cameras live dashboard. It remains available everywhere else, including camera groups.",
         "reviewLabel": "Show in Review",
         "reviewHelp": "Show this camera in Review, including the camera filter, motion review, and the history view."
       }
@@ -613,7 +613,6 @@
         }
       },
       "footer": {
-        "changeCount_zero": "No changes selected",
         "changeCount_one": "{{count}} change will be applied",
         "changeCount_other": "{{count}} changes will be applied",
         "restartNeeded": "Restart will be required for some changes.",
@@ -1055,6 +1054,7 @@
         "title": "Create New User",
         "desc": "Add a new user account and specify a role for access to areas of the Frigate UI.",
         "usernameOnlyInclude": "Username may only include letters, numbers, . or _",
+        "usernameOnlyDots": "Username cannot contain only periods",
         "confirmPassword": "Please confirm your password"
       },
       "deleteUser": {
@@ -1936,7 +1936,8 @@
       "inputDimensionsNotDetectResolution": "Model input width and height are the input dimensions of the object detection model, not your camera's detect resolution. They should match the dimensions of the model you're using — typically a square size like 320x320 or 640x640."
     },
     "ffmpeg": {
-      "hwaccelManualNotRecommended": "Manual hardware acceleration arguments are not recommended. Unless a specific requirement exists, select the preset that matches your hardware."
+      "hwaccelManualNotRecommended": "Manual hardware acceleration arguments are not recommended. Unless a specific requirement exists, select the preset that matches your hardware.",
+      "inputsMissingGo2rtcStream": "An input below points at a go2rtc restream that no longer exists. Select an existing restream or enter the camera's URL manually, otherwise this camera will fail to connect."
     },
     "objects": {
       "genaiNoDescriptionsProvider": "You must configure a GenAI provider with the 'descriptions' role for descriptions to be generated."
@@ -1948,11 +1949,15 @@
     },
     "lpr": {
       "globalDisabled": "The license plate recognition enrichment must be enabled for LPR features to function on this camera.",
-      "vehicleNotTracked": "License plate recognition requires 'car' or 'motorcycle' to be tracked. Enable 'car' or 'motorcycle' in Objects for this camera.",
+      "vehicleNotTracked": "License plate recognition requires a vehicle to be tracked. Enable 'car' or another vehicle type in Objects for this camera.",
       "modelSizeLarge": "The 'large' model is optimized for multi-line license plates. The 'small' model provides better performance over 'large' and should be used unless your region uses multi-line plate formats."
     },
     "record": {
-      "noRecordRole": "No streams have the record role defined. Recording will not function."
+      "noRecordRole": "No streams have the record role defined. Recording will not function.",
+      "profileBaseDisabled": "Recording is disabled in this camera's base config, so enabling it in a profile has no effect. Enable recording in the base config and use a profile to disable it instead."
+    },
+    "notifications": {
+      "profileBaseDisabled": "No cameras have notifications enabled in their base config, so enabling them in a profile has no effect. Enable notifications in the base config of at least one camera."
     },
     "birdseye": {
       "objectsModeDetectDisabled": "Birdseye is set to 'objects' mode, but object detection is disabled for this camera. The camera will not appear in Birdseye."

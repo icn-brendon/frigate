@@ -53,6 +53,7 @@ from frigate.util.file import (
 )
 from frigate.util.image import get_image_from_recording, get_image_quality_params
 from frigate.util.media import get_keyframe_before
+from frigate.util.object import create_empty_regions_grid
 
 logger = logging.getLogger(__name__)
 
@@ -365,8 +366,13 @@ async def get_snapshot_from_recording(
         mime_type = "png" if format == "png" else "jpeg"
         config: FrigateConfig = request.app.frigate_config
 
-        image_data = get_image_from_recording(
-            config.ffmpeg, recording.path, time_in_segment, codec, height
+        image_data = await asyncio.to_thread(
+            get_image_from_recording,
+            config.ffmpeg,
+            recording.path,
+            time_in_segment,
+            codec,
+            height,
         )
 
         if not image_data:
@@ -420,8 +426,12 @@ async def submit_recording_snapshot_to_plus(
         config: FrigateConfig = request.app.frigate_config
         recording: Recordings = recording_query.get()
         time_in_segment = frame_time - recording.start_time
-        image_data = get_image_from_recording(
-            config.ffmpeg, recording.path, time_in_segment, "png"
+        image_data = await asyncio.to_thread(
+            get_image_from_recording,
+            config.ffmpeg,
+            recording.path,
+            time_in_segment,
+            "png",
         )
 
         if not image_data:
@@ -1138,7 +1148,21 @@ def clear_region_grid(request: Request, camera_name: str):
             status_code=404,
         )
 
-    Regions.delete().where(Regions.camera == camera_name).execute()
+    # store an empty grid instead of deleting the row so the grid is
+    # rebuilt from newly tracked objects and not from all past history
+    region = {
+        Regions.camera: camera_name,
+        Regions.grid: create_empty_regions_grid(),
+        Regions.last_update: datetime.now().timestamp(),
+    }
+    (
+        Regions.insert(region)
+        .on_conflict(
+            conflict_target=[Regions.camera],
+            update=region,
+        )
+        .execute()
+    )
     return JSONResponse(
         content={"success": True, "message": "Region grid cleared"},
     )

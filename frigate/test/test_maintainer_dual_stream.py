@@ -21,8 +21,8 @@ for name in _MOCKED_MODULES:
     sys.modules[name] = MagicMock()
 
 from frigate.config import FrigateConfig, RetainModeEnum  # noqa: E402
-from frigate.models import Recordings  # noqa: E402
-from frigate.record.maintainer import RecordingMaintainer  # noqa: E402
+from frigate.models import Recordings, ReviewSegment  # noqa: E402
+from frigate.record.maintainer import RecordingMaintainer, SegmentInfo  # noqa: E402
 
 for name, orig in _originals.items():
     if orig is None:
@@ -34,6 +34,7 @@ for name, orig in _originals.items():
 def _make_maintainer():
     config = MagicMock(spec=FrigateConfig)
     config.cameras = {}
+    config.ffmpeg = MagicMock()
     stop_event = MagicMock()
     maintainer = RecordingMaintainer(config, stop_event)
     maintainer.end_time_cache = {}
@@ -68,6 +69,7 @@ class TestMoveFilesParsing(unittest.IsolatedAsyncioTestCase):
                 patch("frigate.record.maintainer.ReviewSegment") as mock_rs:
             # avoid DB: make the reviews query iterate as empty list
             mock_rs.select.return_value.where.return_value.order_by.return_value = []
+            mock_rs.end_time = ReviewSegment.end_time
             await maintainer.move_files()
 
     async def test_move_files_parses_main_stream_filename(self):
@@ -146,7 +148,7 @@ class TestValidateAndMoveSegmentMainBranch(unittest.IsolatedAsyncioTestCase):
         args, kwargs = maintainer.move_segment.call_args
         # move_segment(camera, start_time, end_time, duration, cache_path, store_mode, stream_quality)
         self.assertEqual(args[0], "back")
-        self.assertEqual(args[5], RetainModeEnum.all)
+        self.assertIsInstance(args[5], SegmentInfo)
         self.assertEqual(args[6], "main")
 
 
@@ -201,7 +203,7 @@ class TestMoveSegmentFilenameAndRecord(unittest.IsolatedAsyncioTestCase):
         ):
             result = await maintainer.move_segment(
                 "back", start, end, 10.0, cache_path,
-                RetainModeEnum.all, stream_quality,
+                fake_seg_info, stream_quality,
             )
 
         return result, captured_paths
@@ -292,6 +294,7 @@ class TestMainBasenameProducesMainRecord(unittest.IsolatedAsyncioTestCase):
                 "frigate.record.maintainer.ReviewSegment"
             ) as mock_rs:
                 mock_rs.select.return_value.where.return_value.order_by.return_value = []
+                mock_rs.end_time = ReviewSegment.end_time
                 await maintainer.move_files()
 
         self.assertEqual(maintainer.move_segment.call_count, 1)

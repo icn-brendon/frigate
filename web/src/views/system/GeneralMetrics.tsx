@@ -470,50 +470,6 @@ export default function GeneralMetrics({
     return Object.keys(series).length > 0 ? Object.values(series) : undefined;
   }, [statsHistory]);
 
-  // Check if Intel GPU has all 0% usage values (known bug)
-  const showIntelGpuWarning = useMemo(() => {
-    if (!statsHistory || statsHistory.length < 3) {
-      return false;
-    }
-
-    const hasIntelGpu = Object.values(statsHistory[0]?.gpu_usages ?? {}).some(
-      (stats) => stats.vendor === "intel",
-    );
-
-    if (!hasIntelGpu) {
-      return false;
-    }
-
-    // Check if all GPU usage values are 0% across all stats
-    let allZero = true;
-    let hasDataPoints = false;
-
-    for (const stats of statsHistory) {
-      if (!stats) {
-        continue;
-      }
-
-      Object.values(stats.gpu_usages || {}).forEach((gpuStats) => {
-        if (gpuStats.vendor !== "intel") {
-          return;
-        }
-        if (gpuStats.gpu) {
-          hasDataPoints = true;
-          const gpuValue = parseFloat(gpuStats.gpu.slice(0, -1));
-          if (!isNaN(gpuValue) && gpuValue > 0) {
-            allZero = false;
-          }
-        }
-      });
-
-      if (!allZero) {
-        break;
-      }
-    }
-
-    return hasDataPoints && allZero;
-  }, [statsHistory]);
-
   // npu stats
 
   const npuSeries = useMemo(() => {
@@ -583,6 +539,36 @@ export default function GeneralMetrics({
 
     return Object.keys(series).length > 0 ? Object.values(series) : undefined;
   }, [statsHistory]);
+
+  // Number of cards the hardware grid renders. Which ones appear depends on
+  // the vendor, so the column count follows the count rather than assuming a
+  // fixed set is present.
+  const hardwareCardCount = useMemo(() => {
+    if (!statsHistory[0]?.gpu_usages) {
+      return 0;
+    }
+
+    const hasNpu = statsHistory[0].npu_usages != undefined;
+
+    return (
+      1 + // gpu usage always renders alongside gpu_usages
+      (gpuMemSeries ? 1 : 0) +
+      (gpuEncSeries?.length ? 1 : 0) +
+      (gpuComputeSeries?.length ? 1 : 0) +
+      (gpuDecSeries?.length ? 1 : 0) +
+      (gpuTempSeries?.length ? 1 : 0) +
+      (hasNpu ? 1 : 0) +
+      (hasNpu && npuTempSeries?.length ? 1 : 0)
+    );
+  }, [
+    statsHistory,
+    gpuMemSeries,
+    gpuEncSeries,
+    gpuComputeSeries,
+    gpuDecSeries,
+    gpuTempSeries,
+    npuTempSeries,
+  ]);
 
   // other processes stats
 
@@ -807,58 +793,17 @@ export default function GeneralMetrics({
             <div
               className={cn(
                 "mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2",
-                gpuTempSeries?.length && "md:grid-cols-3",
-                (gpuEncSeries?.length || gpuComputeSeries?.length) &&
-                  "xl:grid-cols-4",
-                (gpuEncSeries?.length || gpuComputeSeries?.length) &&
-                  gpuTempSeries?.length &&
-                  "3xl:grid-cols-5",
+                hardwareCardCount >= 3 && "lg:grid-cols-3",
+                hardwareCardCount >= 4 && "xl:grid-cols-4",
+                hardwareCardCount >= 5 && "3xl:grid-cols-5",
               )}
             >
               {statsHistory[0]?.gpu_usages && (
                 <>
                   {statsHistory.length != 0 ? (
                     <div className="rounded-lg bg-background_alt p-2.5 md:rounded-2xl">
-                      <div className="mb-5 flex flex-row items-center justify-between">
+                      <div className="mb-5">
                         {t("general.hardwareInfo.gpuUsage")}
-                        {showIntelGpuWarning && (
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <button
-                                className="flex flex-row items-center gap-1.5 text-yellow-600 focus:outline-none dark:text-yellow-500"
-                                aria-label={t(
-                                  "general.hardwareInfo.intelGpuWarning.title",
-                                )}
-                              >
-                                <CiCircleAlert
-                                  className="size-5"
-                                  aria-label={t(
-                                    "general.hardwareInfo.intelGpuWarning.title",
-                                  )}
-                                />
-                                <span className="text-sm">
-                                  {t(
-                                    "general.hardwareInfo.intelGpuWarning.message",
-                                  )}
-                                </span>
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-80">
-                              <div className="space-y-2">
-                                <div className="font-semibold">
-                                  {t(
-                                    "general.hardwareInfo.intelGpuWarning.title",
-                                  )}
-                                </div>
-                                <div>
-                                  {t(
-                                    "general.hardwareInfo.intelGpuWarning.description",
-                                  )}
-                                </div>
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                        )}
                       </div>
                       {gpuSeries.map((series) => (
                         <ThresholdBarGraph

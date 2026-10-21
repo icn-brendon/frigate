@@ -9,15 +9,15 @@
 # match the Python API responses.
 
 # Global ARG must be before any FROM to be visible in FROM directives
-ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:stable-rocm
+ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:0.18.2-rocm@sha256:d659f0967627e7bd0b29c96bc396e436ce041aa40bf19e213f02bdade6092a83
 
 # ---------------------------------------------------------------------------
 # Stage 1: build the web frontend (discarded after COPY)
 # ---------------------------------------------------------------------------
-FROM node:20 AS web-build
+FROM node:24.14.0-bookworm-slim AS web-build
 WORKDIR /work
 COPY web/package.json web/package-lock.json ./
-RUN npm install
+RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build \
     && mv dist/BASE_PATH/monacoeditorwork/* dist/assets/ \

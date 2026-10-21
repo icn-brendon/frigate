@@ -1,0 +1,11 @@
+ARG BASE_IMAGE=ghcr.io/blakeblackshear/frigate:0.18.2-rocm@sha256:d659f0967627e7bd0b29c96bc396e436ce041aa40bf19e213f02bdade6092a83
+FROM ${BASE_IMAGE}
+WORKDIR /opt/frigate
+COPY frigate/ frigate/
+COPY migrations/ migrations/
+COPY docker/main/rootfs/usr/local/go2rtc/create_config.py /usr/local/go2rtc/create_config.py
+COPY downstream/ downstream/
+RUN echo 'VERSION = "0.18.2-dual-stream-test"' > frigate/version.py
+ENV PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+USER 1000:1000
+ENTRYPOINT ["python3", "downstream/testbench.py"]

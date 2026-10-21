@@ -8,6 +8,8 @@ import EventReviewTimeline from "@/components/timeline/EventReviewTimeline";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { VolumeSlider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -1028,6 +1030,9 @@ function MotionReview({
       if (!allowedCameras.includes(cam.name)) {
         return false;
       }
+      if (cam.ui?.review === false) {
+        return false;
+      }
       if (selectedCams && !selectedCams.includes(cam.name)) {
         return false;
       }
@@ -1036,6 +1041,11 @@ function MotionReview({
 
     return cameras.sort((a, b) => a.ui.order - b.ui.order);
   }, [config, filter, allowedCameras]);
+
+  const reviewCamerasParam = useMemo(
+    () => reviewCameras.map((cam) => cam.name).join(","),
+    [reviewCameras],
+  );
 
   const videoPlayersRef = useRef<{ [camera: string]: PreviewController }>({});
 
@@ -1056,7 +1066,7 @@ function MotionReview({
       before: alignedBefore,
       after: alignedAfter,
       scale: segmentDuration / 2,
-      cameras: filter?.cameras?.join(",") ?? null,
+      cameras: reviewCamerasParam,
     },
   ]);
 
@@ -1065,7 +1075,7 @@ function MotionReview({
     {
       before: alignedBefore,
       after: alignedAfter,
-      cameras: filter?.cameras?.join(",") ?? null,
+      cameras: reviewCamerasParam,
     },
   ]);
 
@@ -1150,6 +1160,7 @@ function MotionReview({
     new Set(),
   );
   const [isRegionFilterOpen, setIsRegionFilterOpen] = useState(false);
+  const [cropToFilter, setCropToFilter] = useState(true);
 
   // reset filter when camera changes
   useEffect(() => {
@@ -1389,7 +1400,7 @@ function MotionReview({
                     </DialogDescription>
                   </DialogHeader>
                   <MotionRegionFilterGrid
-                    cameraName={selectedMotionPreviewCamera.name}
+                    camera={selectedMotionPreviewCamera}
                     selectedCells={pendingFilterCells}
                     onCellsChange={setPendingFilterCells}
                   />
@@ -1444,7 +1455,12 @@ function MotionReview({
 
                     <div className="space-y-3">
                       <div className="space-y-0.5">
-                        <div>{t("motionPreviews.speed")}</div>
+                        <Label
+                          className="cursor-pointer"
+                          htmlFor="motionPreviewSpeed"
+                        >
+                          {t("motionPreviews.speed")}
+                        </Label>
                         <div className="text-xs text-muted-foreground">
                           {t("motionPreviews.speedDesc")}
                         </div>
@@ -1456,6 +1472,7 @@ function MotionReview({
                         }
                       >
                         <SelectTrigger
+                          id="motionPreviewSpeed"
                           className="h-10 w-full"
                           aria-label={t("motionPreviews.speedAria")}
                         >
@@ -1473,7 +1490,7 @@ function MotionReview({
 
                     <div className="space-y-3">
                       <div className="space-y-0.5">
-                        <div>{t("motionPreviews.dim")}</div>
+                        <Label>{t("motionPreviews.dim")}</Label>
                         <div className="text-xs text-muted-foreground">
                           {t("motionPreviews.dimDesc")}
                         </div>
@@ -1495,6 +1512,26 @@ function MotionReview({
                             setDimStrength(nextValue);
                           }}
                         />
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label
+                          className="cursor-pointer"
+                          htmlFor="cropToFilter"
+                        >
+                          {t("motionPreviews.crop")}
+                        </Label>
+                        <Switch
+                          id="cropToFilter"
+                          checked={cropToFilter}
+                          onCheckedChange={setCropToFilter}
+                          aria-label={t("motionPreviews.cropAria")}
+                        />
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {t("motionPreviews.cropDesc")}
                       </div>
                     </div>
 
@@ -1553,6 +1590,7 @@ function MotionReview({
             playbackRate={playbackRate}
             nonMotionAlpha={dimStrength / 100}
             motionFilterCells={motionFilterCells}
+            cropToFilter={cropToFilter}
             onSeek={(timestamp) => {
               onOpenRecording({
                 camera: selectedMotionPreviewCamera.name,

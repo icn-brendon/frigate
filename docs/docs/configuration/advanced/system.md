@@ -67,6 +67,12 @@ This section can be used to set environment variables for those unable to modify
 
 Variables prefixed with `FRIGATE_` can be referenced in config fields that support environment variable substitution (such as MQTT host and credentials, camera stream URLs, and ONVIF host and credentials) using the `{FRIGATE_VARIABLE_NAME}` syntax.
 
+:::note
+
+The `go2rtc` section is an exception. go2rtc runs as a separate process, so its stream definitions can only be substituted with variables that exist in the container's environment (set via Docker `-e`, the `environment:` section of `docker-compose.yml`, or Docker secrets). Variables defined in the `environment_vars` block above are not available to go2rtc streams. Home Assistant app users, who cannot set container environment variables, must instead put credentials directly in their go2rtc stream URLs.
+
+:::
+
 <ConfigTabs>
 <TabItem value="ui">
 
@@ -287,6 +293,10 @@ networking:
 
 This setting is for advanced users. For the majority of use cases it's recommended to change the `ports` section of your Docker compose file or use the Docker `run` `--publish` option instead, e.g. `-p 443:8971`. Changing Frigate's ports may break some integrations.
 
+The internal and external ports must be different port numbers, and Frigate will refuse to start otherwise. Requests arriving on the internal port are treated as authenticated admins, so pointing both at the same port would remove authentication from the external one.
+
+Nginx binds these ports when it starts, so port changes only take effect after Frigate restarts.
+
 :::
 
 ### Customizing the Nginx configuration
@@ -329,7 +339,7 @@ For example:
 ```
 services:
   frigate:
-    image: blakeblackshear/frigate:latest
+    image: ghcr.io/blakeblackshear/frigate:stable
     environment:
       - FRIGATE_BASE_PATH=/frigate
 ```

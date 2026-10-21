@@ -24,12 +24,12 @@ Frigate supports multiple different detectors that work on different types of ha
 - [Coral EdgeTPU](#edge-tpu-detector): The Google Coral EdgeTPU is available in USB, Mini PCIe, and m.2 formats allowing for a wide range of compatibility with devices.
 - [Hailo](#hailo-8): The Hailo8 and Hailo8L AI Acceleration module is available in m.2 format with a HAT for RPi devices, offering a wide range of compatibility with devices.
 - <CommunityBadge /> [MemryX](#memryx-mx3): The MX3 Acceleration module is available in m.2 format, offering broad compatibility across various platforms.
-- <CommunityBadge /> [DeGirum](#degirum): Service for using hardware devices in the cloud or locally. Hardware and models provided on the cloud on [their website](https://hub.degirum.com).
 
 **AMD**
 
 - [ROCm](#amdrocm-gpu-detector): ROCm can run on AMD Discrete GPUs to provide efficient object detection.
 - [ONNX](#onnx): ROCm will automatically be detected and used as a detector in the `-rocm` Frigate image when a supported ONNX model is configured.
+- <CommunityBadge /> [XDNA2](#amd-xdna2): AMD Ryzen AI / XDNA2 NPUs can run object detection through the community-maintained `frigate-xdna` ZMQ sidecar.
 
 **Apple Silicon**
 
@@ -298,6 +298,14 @@ detectors:
 
 :::
 
+### Intel NPU host requirements {#intel-npu-requirements}
+
+The NPU firmware is loaded by the host kernel and is not part of the Frigate image. Everything else the NPU needs is bundled in the container, so host NPU libraries should never be mounted in.
+
+Frigate bundles a specific version of Intel's [linux-npu-driver](https://github.com/intel/linux-npu-driver/releases), and the host firmware must come from that release or a newer one. Firmware older than the bundled driver may fail with `MAPPED_INFERENCE_VERSION is NOT compatible with the ELF`, where `Expected` is the version the firmware supports and `received` is the version the bundled compiler produced. Distributions often package older firmware than the driver Frigate ships, so check the build date on the host with `sudo dmesg | grep -i vpu` and update it there if needed.
+
+Intel NPUs cannot be used under Home Assistant OS, which does not include the NPU firmware.
+
 ### Configuration {#configuration-openvino}
 
 <ModelConfigDropdown detectorTitle="OpenVINO" models={objectDetectorsModels.openvino.models} />
@@ -500,6 +508,28 @@ Replace `<your_codeproject_ai_server_ip>` and `<port>` with the IP address and p
 To verify that the integration is working correctly, start Frigate and observe the logs for any error messages related to CodeProject.AI. Additionally, you can check the Frigate web interface to see if the objects detected by CodeProject.AI are being displayed and tracked properly.
 
 # Community Supported Detectors
+
+## AMD XDNA2
+
+AMD Ryzen AI / XDNA2 NPUs can be used through the community-maintained
+[frigate-xdna](https://github.com/mitchins/frigate-xdna) detector sidecar.
+The sidecar runs separately from Frigate and connects using Frigate's ZMQ
+detector interface.
+
+Currently qualified on **Ryzen AI Max 300 / Strix Halo**. Other XDNA2 devices
+are not yet qualified; XDNA1 is unsupported.
+
+Follow the frigate-xdna setup instructions to prepare and start the sidecar
+before starting Frigate.
+
+### Configuration {#configuration-xdna2}
+
+Using the detector config below will connect Frigate to the sidecar:
+
+<ModelConfigDropdown detectorTitle="AMD XDNA2" models={objectDetectorsModels.xdna2.models} />
+
+The example assumes Frigate and the sidecar share a Docker network where the
+sidecar is named `xdna`.
 
 ## MemryX MX3
 
@@ -754,87 +784,6 @@ Explanation of the parameters:
   - `tk_version`: Version of `rknn-toolkit2` (e.g. "2.3.0")
   - **example**: Specifying `output_name = "frigate-{quant}-{input_basename}-{soc}-v{tk_version}"` could result in a model called `frigate-i8-my_model-rk3588-v2.3.0.rknn`.
 - `config`: Configuration passed to `rknn-toolkit2` for model conversion. For an explanation of all available parameters have a look at section "2.2. Model configuration" of [this manual](https://github.com/MarcA711/rknn-toolkit2/releases/download/v2.3.2/03_Rockchip_RKNPU_API_Reference_RKNN_Toolkit2_V2.3.2_EN.pdf).
-
-## DeGirum
-
-DeGirum is a detector that can use any type of hardware listed on [their website](https://hub.degirum.com). DeGirum can be used with local hardware through a DeGirum AI Server, or through the use of `@local`. You can also connect directly to DeGirum's AI Hub to run inferences. **Please Note:** This detector _cannot_ be used for commercial purposes.
-
-### Configuration {#configuration-degirum}
-
-#### AI Server Inference
-
-Before starting with the config file for this section, you must first launch an AI server. DeGirum has an AI server ready to use as a docker container. Add this to your `docker-compose.yml` to get started:
-
-```yaml
-degirum_detector:
-  container_name: degirum
-  image: degirum/aiserver:latest
-  privileged: true
-  ports:
-    - "8778:8778"
-```
-
-All supported hardware will automatically be found on your AI server host as long as relevant runtimes and drivers are properly installed on your machine. Refer to [DeGirum's docs site](https://docs.degirum.com/pysdk/runtimes-and-drivers) if you have any trouble.
-
-Once completed, configure the detector as follows:
-
-<ModelConfigDropdown detectorTitle="DeGirum" models={objectDetectorsModels.degirumAiServer.models} />
-
-Setting up a model in the `config.yml` is similar to setting up an AI server.
-You can set it to:
-
-- A model listed on the [AI Hub](https://hub.degirum.com), given that the correct zoo name is listed in your detector
-  - If this is what you choose to do, the correct model will be downloaded onto your machine before running.
-- A local directory acting as a zoo. See DeGirum's docs site [for more information](https://docs.degirum.com/pysdk/user-guide-pysdk/organizing-models#model-zoo-directory-structure).
-- A path to some model.json.
-
-```yaml
-model:
-  path: ./mobilenet_v2_ssd_coco--300x300_quant_n2x_orca1_1 # directory to model .json and file
-  width: 300 # width is in the model name as the first number in the "int"x"int" section
-  height: 300 # height is in the model name as the second number in the "int"x"int" section
-  input_pixel_format: rgb/bgr # look at the model.json to figure out which to put here
-```
-
-#### Local Inference
-
-It is also possible to eliminate the need for an AI server and run the hardware directly. The benefit of this approach is that you eliminate any bottlenecks that occur when transferring prediction results from the AI server docker container to the frigate one. However, the method of implementing local inference is different for every device and hardware combination, so it's usually more trouble than it's worth. A general guideline to achieve this would be:
-
-1. Ensuring that the frigate docker container has the runtime you want to use. So for instance, running `@local` for Hailo means making sure the container you're using has the Hailo runtime installed.
-2. To double check the runtime is detected by the DeGirum detector, make sure the `degirum sys-info` command properly shows whatever runtimes you mean to install.
-3. Create a DeGirum detector in your configuration.
-
-<ModelConfigDropdown detectorTitle="DeGirum" models={objectDetectorsModels.degirumLocal.models} />
-
-Once `degirum_detector` is setup, you can choose a model through 'model' section in the `config.yml` file.
-
-```yaml
-model:
-  path: mobilenet_v2_ssd_coco--300x300_quant_n2x_orca1_1
-  width: 300 # width is in the model name as the first number in the "int"x"int" section
-  height: 300 # height is in the model name as the second number in the "int"x"int" section
-  input_pixel_format: rgb/bgr # look at the model.json to figure out which to put here
-```
-
-#### AI Hub Cloud Inference
-
-If you do not possess whatever hardware you want to run, there's also the option to run cloud inferences. Do note that your detection fps might need to be lowered as network latency does significantly slow down this method of detection. For use with Frigate, we highly recommend using a local AI server as described above. To set up cloud inferences,
-
-1. Sign up at [DeGirum's AI Hub](https://hub.degirum.com).
-2. Get an access token.
-3. Create a DeGirum detector in your configuration.
-
-<ModelConfigDropdown detectorTitle="DeGirum" models={objectDetectorsModels.degirumCloud.models} />
-
-Once `degirum_detector` is setup, you can choose a model through 'model' section in the `config.yml` file.
-
-```yaml
-model:
-  path: mobilenet_v2_ssd_coco--300x300_quant_n2x_orca1_1
-  width: 300 # width is in the model name as the first number in the "int"x"int" section
-  height: 300 # height is in the model name as the second number in the "int"x"int" section
-  input_pixel_format: rgb/bgr # look at the model.json to figure out which to put here
-```
 
 ## AXERA
 

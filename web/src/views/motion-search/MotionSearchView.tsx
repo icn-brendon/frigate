@@ -51,7 +51,12 @@ import { useTimelineUtils } from "@/hooks/use-timeline-utils";
 import { useCameraPreviews } from "@/hooks/use-camera-previews";
 import { getChunkedTimeDay } from "@/utils/timelineUtil";
 
-import { MotionData, REVIEW_PADDING, ZoomLevel } from "@/types/review";
+import {
+  MotionData,
+  REVIEW_PADDING,
+  ReviewSegment,
+  ZoomLevel,
+} from "@/types/review";
 import {
   ASPECT_VERTICAL_LAYOUT,
   ASPECT_WIDE_LAYOUT,
@@ -85,6 +90,7 @@ type MotionSearchViewProps = {
 };
 
 const DEFAULT_EXPORT_WINDOW_SECONDS = 60;
+const NO_REVIEW_EVENTS: ReviewSegment[] = [];
 
 export default function MotionSearchView({
   config,
@@ -515,6 +521,12 @@ export default function MotionSearchView({
       : null,
   );
 
+  const timelineMotionEvents = useMemo(() => motionData ?? [], [motionData]);
+  const timelineNoRecordings = useMemo(
+    () => noRecordings ?? [],
+    [noRecordings],
+  );
+
   const recordingParams = useMemo(
     () => ({
       before: currentTimeRange.before,
@@ -770,6 +782,34 @@ export default function MotionSearchView({
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [cancelMotionSearchJobViaBeacon]);
+
+  const handleBack = useCallback(() => {
+    if (onBack) {
+      onBack();
+    } else {
+      navigate(-1);
+    }
+  }, [navigate, onBack]);
+
+  // Dismissing the entry dialog (escape / click outside) before a search has
+  // run leaves nothing behind it, so cancel the flow instead of revealing an
+  // empty page.
+  const handleSearchDialogOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (
+        !nextOpen &&
+        !isSearching &&
+        !hasSearched &&
+        searchResults.length === 0
+      ) {
+        handleBack();
+        return;
+      }
+
+      setIsSearchDialogOpen(nextOpen);
+    },
+    [handleBack, hasSearched, isSearching, searchResults.length],
+  );
 
   const handleNewSearch = useCallback(() => {
     if (jobId && jobCamera) {
@@ -1027,11 +1067,11 @@ export default function MotionSearchView({
           showHandlebar={true}
           handlebarTime={currentTime}
           setHandlebarTime={setCurrentTime}
-          events={[]}
-          motion_events={motionData ?? []}
-          noRecordingRanges={noRecordings ?? []}
+          events={NO_REVIEW_EVENTS}
+          motion_events={timelineMotionEvents}
+          noRecordingRanges={timelineNoRecordings}
           contentRef={contentRef}
-          onHandlebarDraggingChange={(dragging) => setScrubbing(dragging)}
+          onHandlebarDraggingChange={setScrubbing}
           showExportHandles={
             (exportMode === "timeline" || exportMode === "timeline_multi") &&
             Boolean(exportRange)
@@ -1239,7 +1279,7 @@ export default function MotionSearchView({
         <Toaster closeButton={true} position="top-center" />
         <MotionSearchDialog
           open={isSearchDialogOpen}
-          onOpenChange={setIsSearchDialogOpen}
+          onOpenChange={handleSearchDialogOpenChange}
           config={config}
           cameras={cameras}
           selectedCamera={selectedCamera}
@@ -1277,7 +1317,7 @@ export default function MotionSearchView({
                 className="flex items-center gap-2.5 rounded-lg"
                 aria-label={t("label.back", { ns: "common" })}
                 size="sm"
-                onClick={() => (onBack ? onBack() : navigate(-1))}
+                onClick={handleBack}
               >
                 <IoMdArrowRoundBack className="size-5 text-secondary-foreground" />
                 {isDesktop && (
@@ -1317,6 +1357,7 @@ export default function MotionSearchView({
                   camera={selectedCamera}
                   currentTime={currentTime}
                   latestTime={timeRange.before}
+                  earliestTime={timeRange.after}
                   mode={exportMode}
                   range={exportRange}
                   showPreview={showExportPreview}
@@ -1437,6 +1478,7 @@ export default function MotionSearchView({
               camera={selectedCamera}
               currentTime={currentTime}
               latestTime={timeRange.before}
+              earliestTime={timeRange.after}
               mode={exportMode}
               range={exportRange}
               showPreview={showExportPreview}
@@ -1462,7 +1504,7 @@ export default function MotionSearchView({
               isDesktop
                 ? mainCameraAspect === "tall"
                   ? "mr-2 h-full min-h-0 min-w-0 flex-1 items-center"
-                  : "mr-2 h-full min-h-0 min-w-0 flex-1"
+                  : "mx-2 h-full min-h-0 min-w-0 flex-1"
                 : mainCameraAspect === "tall"
                   ? "flex-1 portrait:h-[40dvh] portrait:max-h-[40dvh] portrait:flex-shrink-0 portrait:flex-grow-0 portrait:basis-auto portrait:items-center portrait:justify-center"
                   : "flex-1 portrait:max-h-[40dvh] portrait:flex-shrink-0 portrait:flex-grow-0 portrait:basis-auto landscape:items-center landscape:justify-center",

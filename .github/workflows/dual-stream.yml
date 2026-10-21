@@ -1,0 +1,89 @@
+name: Dual-stream release bench
+
+on:
+  push:
+    branches: ["update/dual-stream-*", "downstream/**"]
+  pull_request:
+    paths:
+      - "downstream/**"
+      - "frigate/**"
+      - "migrations/**"
+      - "web/**"
+      - "docker/uat/**"
+      - ".github/workflows/dual-stream.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dual-stream-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve pinned upstream runtime
+        id: release
+        run: echo "base=$(jq -r .base_image downstream/release.json)" >> "$GITHUB_OUTPUT"
+      - name: Build isolated regression bench
+        run: docker build -f downstream/Dockerfile.test --build-arg BASE_IMAGE='${{ steps.release.outputs.base }}' -t dual-stream-test .
+      - name: Run isolated backend regressions
+        run: >-
+          docker run --rm --read-only --network none --cap-drop ALL
+          --security-opt no-new-privileges --pids-limit 256 --memory 4g
+          --tmpfs /tmp:rw,size=512m --tmpfs /config:rw,uid=1000,gid=1000,size=64m
+          --tmpfs /media:rw,uid=1000,gid=1000,size=64m
+          dual-stream-test
+
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build isolated browser bench
+        run: docker build -f downstream/Dockerfile.web-test -t dual-stream-web-test .
+      - name: Run desktop and mobile dual-stream regressions
+        run: >-
+          docker run --rm --network none --cap-drop ALL
+          --security-opt no-new-privileges --pids-limit 512 --memory 6g
+          --ipc private --shm-size 1g dual-stream-web-test
+
+  image:
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve release and immutable candidate tag
+        id: release
+        run: |
+          echo "base=$(jq -r .base_image downstream/release.json)" >> "$GITHUB_OUTPUT"
+          echo "tag=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA::8}-rocm" >> "$GITHUB_OUTPUT"
+          make version
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/uat/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.release.outputs.tag }}
+          build-args: BASE_IMAGE=${{ steps.release.outputs.base }}
+          cache-from: type=gha,scope=dual-stream-rocm
+          cache-to: type=gha,scope=dual-stream-rocm,mode=max

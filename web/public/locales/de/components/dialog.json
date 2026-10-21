@@ -30,6 +30,9 @@
           "ask_a": "Ist dieses Objekt ein <code>{{label}}</code>?",
           "ask_an": "Ist dieses Objekt ein <code>{{label}}</code>?",
           "ask_full": "Ist dieses Objekt ein <code>{{untranslatedLabel}}</code> ({{translatedLabel}})?"
+        },
+        "toast": {
+          "error": "Übermittlung an Frigate+ fehlgeschlagen. Bitte überprüfen Sie Ihre Netzwerkverbindung und versuchen Sie es erneut."
         }
       },
       "submitToPlus": {
@@ -65,7 +68,8 @@
       "error": {
         "endTimeMustAfterStartTime": "Die Endzeit darf nicht vor der Startzeit liegen",
         "failed": "Fehler beim Export in die Warteschlange: {{error}}",
-        "noVaildTimeSelected": "Kein gültiger Zeitraum ausgewählt"
+        "noVaildTimeSelected": "Kein gültiger Zeitraum ausgewählt",
+        "noValidTimeSelected": "Kein gültiger Zeitraum ausgewählt"
       },
       "success": "Export erfolgreich gestartet. Die Datei befindet sich auf der Exportseite.",
       "view": "Ansicht",
@@ -74,8 +78,8 @@
       "batchSuccess_other": "{{count}} Exports gestartet. Öffne den Fall jetzt.",
       "batchPartial": "{{successful}} von {{total}} Exporten gestartet. Fehlgeschlagene Kameras: {{failedCameras}}",
       "batchFailed": "Fehler beim Starten der {{total}} Exporte. Fehlgeschlagene Kameras: {{failedCameras}}",
-      "batchQueuedSuccess_one": "1 Export in die Warteschlange gestellt. Fall wird jetzt geöffnet.",
-      "batchQueuedSuccess_other": "{{count}} Exporte in der Warteschlange. Fall wird jetzt geöffnet.",
+      "batchQueuedSuccess_one": "1 Export in die Warteschlange gestellt.",
+      "batchQueuedSuccess_other": "{{count}} Exporte in der Warteschlange.",
       "batchQueuedPartial": "{{successful}} von {{total}} Exporten in die Warteschlange gestellt. Fehlerhafte Kameras: {{failedCameras}}",
       "batchQueueFailed": "Fehler beim Einreihen von {{total}} Exporten in die Warteschlange. Fehlerhafte Kameras: {{failedCameras}}"
     },
@@ -108,7 +112,7 @@
       "noCameras": "Keine Kameras verfügbar",
       "detectionCount_one": "1 verfolgtes Objekt",
       "detectionCount_other": "{{count}} verfolgte Objekte",
-      "nameLabel": "Exportname",
+      "nameLabel": "Name exportieren",
       "namePlaceholder": "Optionaler Basisname für diese Exporte",
       "queueingButton": "Exporte werden in die Warteschlange gestellt...",
       "exportButton_one": "Export 1 Kamera",
@@ -131,8 +135,8 @@
       "exportButton_other": "{{count}} Bewertung exportieren",
       "exportingButton": "Exportieren...",
       "toast": {
-        "started_one": "1 Export gestartet. Fall wird jetzt geöffnet.",
-        "started_other": "{{count}} Exporte gestartet. Fall wird jetzt geöffnet.",
+        "started_one": "1 Export gestartet.",
+        "started_other": "{{count}} Exporte gestartet.",
         "startedNoCase_one": "1 Export gestartet.",
         "startedNoCase_other": "{{count}} Exports gestartet.",
         "partial": "{{successful}} von {{total}} Exporten gestartet. Fehlgeschlagen: {{failedItems}}",

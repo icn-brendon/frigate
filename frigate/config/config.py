@@ -400,6 +400,9 @@ def verify_objects_track(
         )
         camera_config.objects.track = valid_objects
 
+        for label in invalid_objects:
+            camera_config.objects.filters.pop(label, None)
+
 
 def verify_lpr_and_face(
     frigate_config: FrigateConfig, camera_config: CameraConfig
@@ -637,7 +640,7 @@ class FrigateConfig(FrigateBaseModel):
         # set notifications state
         self.notifications.enabled_in_config = self.notifications.enabled
 
-        # validate genai: each role (tools, vision, embeddings) at most once
+        # validate genai: each role (chat, descriptions, embeddings) at most once
         role_to_name: dict[GenAIRoleEnum, str] = {}
         for name, genai_cfg in self.genai.items():
             for role in genai_cfg.roles:

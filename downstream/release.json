@@ -1,0 +1,5 @@
+{
+  "upstream_tag": "v0.18.2",
+  "upstream_commit": "cfa08c56b23d23280c3d0a218e5a43182c97445b",
+  "base_image": "ghcr.io/blakeblackshear/frigate:0.18.2-rocm@sha256:d659f0967627e7bd0b29c96bc396e436ce041aa40bf19e213f02bdade6092a83"
+}
