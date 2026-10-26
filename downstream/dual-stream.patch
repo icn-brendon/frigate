@@ -1977,10 +1977,10 @@ index 624ed6e9a20115615862011cf2846922413ff805..68c0d839dba9ac1d06b01d5eaa085936
 +            event_recorder.start()
 diff --git a/frigate/test/http_api/test_http_dual_stream_playback.py b/frigate/test/http_api/test_http_dual_stream_playback.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..814912f117a3199f1276ae41f2c1dc07a039d02a
+index 0000000000000000000000000000000000000000..683731abf13a03af39e7fdc97b834ef3ba328482
 --- /dev/null
 +++ b/frigate/test/http_api/test_http_dual_stream_playback.py
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,172 @@
 +"""Regression tests for HD playback query cost and API responsiveness."""
 +
 +import threading
@@ -2148,6 +2148,11 @@ index 0000000000000000000000000000000000000000..814912f117a3199f1276ae41f2c1dc07
 +                media_util.get_keyframe_before("/unique/retry.mp4", 500), 0
 +            )
 +        self.assertEqual(probe.call_count, 2)
++
++    def test_keyframe_snap_does_not_round_forward(self):
++        result = SimpleNamespace(returncode=0, stdout=b"0.0,K_\n0.0019,K_\n")
++        with patch("frigate.util.media.sp.run", return_value=result):
++            self.assertEqual(media_util.get_keyframe_before("/unique/fraction.mp4", 1), 0)
 diff --git a/frigate/test/test_dual_stream_config.py b/frigate/test/test_dual_stream_config.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..ad6e1f1208254b811fdcf3896be76d2f34c9d1a7
@@ -4567,10 +4572,15 @@ index 0000000000000000000000000000000000000000..ff489335aa69642c7894cb38fc75edc6
 +if __name__ == "__main__":
 +    unittest.main()
 diff --git a/frigate/util/media.py b/frigate/util/media.py
-index e4e84e9149c5b9377f28f62933e3b104e9942039..fe4218c9a4a6076495e56690c80d40ff013bf2a1 100644
+index e4e84e9149c5b9377f28f62933e3b104e9942039..6527b43052e4ad677877bce36e1f82ec02a5a7e9 100644
 --- a/frigate/util/media.py
 +++ b/frigate/util/media.py
-@@ -7,6 +7,7 @@ import os
+@@ -3,10 +3,12 @@
+ import datetime
+ import errno
+ import logging
++import math
+ import os
  import subprocess as sp
  from collections.abc import Iterable
  from dataclasses import dataclass, field
@@ -4578,7 +4588,7 @@ index e4e84e9149c5b9377f28f62933e3b104e9942039..fe4218c9a4a6076495e56690c80d40ff
  from pathlib import Path
  
  from peewee import DatabaseError, chunked
-@@ -879,51 +880,46 @@ def sync_all_media(
+@@ -879,51 +881,48 @@ def sync_all_media(
      return results
  
  
@@ -4609,7 +4619,7 @@ index e4e84e9149c5b9377f28f62933e3b104e9942039..fe4218c9a4a6076495e56690c80d40ff
 -        return None
 -
 +@lru_cache(maxsize=512)
-+def _recording_keyframes(path: str) -> tuple[int, ...]:
++def _recording_keyframes(path: str) -> tuple[float, ...]:
 +    """Cache successful probes of completed, immutable recording segments."""
 +    result = sp.run(
 +        [
@@ -4646,7 +4656,9 @@ index e4e84e9149c5b9377f28f62933e3b104e9942039..fe4218c9a4a6076495e56690c80d40ff
          try:
 -            ts = float(ts_str)
 -        except ValueError:
-+            keyframes.append(int(float(parts[0]) * 1000))
++            timestamp_ms = float(parts[0]) * 1000
++            if math.isfinite(timestamp_ms):
++                keyframes.append(timestamp_ms)
 +        except (ValueError, OverflowError):
              continue
 -        if ts <= offset_s:
@@ -4664,7 +4676,7 @@ index e4e84e9149c5b9377f28f62933e3b104e9942039..fe4218c9a4a6076495e56690c80d40ff
 +        return None
  
 -    return best_ms
-+    return next((ts for ts in reversed(keyframes) if ts <= offset_ms), None)
++    return next((int(ts) for ts in reversed(keyframes) if ts <= offset_ms), None)
 diff --git a/frigate/video/ffmpeg.py b/frigate/video/ffmpeg.py
 index 67c0ac0e5d4e5c42826cb9700fbc0a1adfa76881..d09e004f0d21692c8ae19e92fdfc5aea6448c2cc 100644
 --- a/frigate/video/ffmpeg.py
