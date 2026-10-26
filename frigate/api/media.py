@@ -585,6 +585,26 @@ async def vod_ts(
     force_discontinuity: bool = False,
     stream_quality: str = "sub",
 ):
+    # SQLite and ffprobe both block. Build the mapping in a worker so media
+    # requests cannot hold up authentication and unrelated API requests.
+    return await asyncio.to_thread(
+        _build_vod_ts,
+        camera_name,
+        start_ts,
+        end_ts,
+        force_discontinuity,
+        stream_quality,
+    )
+
+
+def _build_vod_ts(
+    camera_name: str,
+    start_ts: float,
+    end_ts: float,
+    force_discontinuity: bool,
+    stream_quality: str,
+):
+    """Build a VOD mapping from completed, duration-bounded recording segments."""
     logger.debug(
         "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
         camera_name,
@@ -623,6 +643,8 @@ async def vod_ts(
             | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
         )
         .where(Recordings.camera == camera_name)
+        # Ingest accepts only segments shorter than MAX_SEGMENT_DURATION.
+        .where(Recordings.start_time.between(start_ts - MAX_SEGMENT_DURATION, end_ts))
         .where(quality_filter)
         .order_by(Recordings.start_time.asc())
     )

@@ -25,7 +25,7 @@ from frigate.api.defs.query.recordings_query_parameters import (
 )
 from frigate.api.defs.response.generic_response import GenericResponse
 from frigate.api.defs.tags import Tags
-from frigate.const import RECORD_DIR
+from frigate.const import MAX_SEGMENT_DURATION, RECORD_DIR
 from frigate.models import Event, Recordings
 from frigate.util.time import get_dst_transitions
 
@@ -225,7 +225,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
 
 
 @router.get("/{camera_name}/recordings", dependencies=[Depends(require_camera_access)])
-async def recordings(
+def recordings(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
@@ -247,6 +247,7 @@ async def recordings(
         .where(
             Recordings.camera == camera_name,
             Recordings.end_time >= after,
+            Recordings.start_time >= after - MAX_SEGMENT_DURATION,
             Recordings.start_time <= before,
             Recordings.stream_quality == quality,
         )
@@ -274,7 +275,7 @@ MAIN_AVAILABILITY_MAX_ROWS = 10_000
     dependencies=[Depends(require_camera_access)],
     operation_id="main_stream_availability",
 )
-async def main_stream_availability(
+def main_stream_availability(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
@@ -302,9 +303,10 @@ async def main_stream_availability(
             status_code=400,
         )
 
-    # Uses the (camera, start_time) DB index via the ORM's compound WHERE.
-    # LIMIT is applied +1 so we can detect truncation without an extra
-    # COUNT(*) pass.
+    # Ingest rejects segments >= MAX_SEGMENT_DURATION. Bound both sides of
+    # the (camera, stream_quality, start_time) index without losing overlaps.
+    # A synchronous route keeps SQLite work in FastAPI's worker pool.
+    # Read one extra row to detect truncation without a COUNT(*) scan.
     query = (
         Recordings.select(
             Recordings.start_time,
@@ -313,6 +315,7 @@ async def main_stream_availability(
         .where(
             Recordings.camera == camera_name,
             Recordings.end_time >= after,
+            Recordings.start_time >= after - MAX_SEGMENT_DURATION,
             Recordings.start_time <= before,
             Recordings.stream_quality == "main",
         )

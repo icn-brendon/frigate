@@ -414,7 +414,7 @@ index 361300daa70203d3c78011d2ff7c9b4100d22d2d..0d7e8f8349d27ac88e9ab82ce7192ca3
      try:
          start_export_job(request.app.frigate_config, export_job)
 diff --git a/frigate/api/media.py b/frigate/api/media.py
-index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcdaaf1459f 100644
+index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..a468546fce015f588e87c1c9dc7bec4a0cdfecaf 100644
 --- a/frigate/api/media.py
 +++ b/frigate/api/media.py
 @@ -58,6 +58,21 @@ from frigate.util.object import create_empty_regions_grid
@@ -439,12 +439,32 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
  router = APIRouter(tags=[Tags.media])
  
  
-@@ -568,20 +583,39 @@ async def vod_ts(
+@@ -568,20 +583,59 @@ async def vod_ts(
      start_ts: float,
      end_ts: float,
      force_discontinuity: bool = False,
 +    stream_quality: str = "sub",
++):
++    # SQLite and ffprobe both block. Build the mapping in a worker so media
++    # requests cannot hold up authentication and unrelated API requests.
++    return await asyncio.to_thread(
++        _build_vod_ts,
++        camera_name,
++        start_ts,
++        end_ts,
++        force_discontinuity,
++        stream_quality,
++    )
++
++
++def _build_vod_ts(
++    camera_name: str,
++    start_ts: float,
++    end_ts: float,
++    force_discontinuity: bool,
++    stream_quality: str,
  ):
++    """Build a VOD mapping from completed, duration-bounded recording segments."""
      logger.debug(
 -        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s",
 +        "VOD: Generating VOD for %s from %s to %s with force_discontinuity=%s quality=%s",
@@ -481,17 +501,19 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
          )
          .where(
              Recordings.start_time.between(start_ts, end_ts)
-@@ -589,8 +623,8 @@ async def vod_ts(
+@@ -589,8 +643,10 @@ async def vod_ts(
              | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
          )
          .where(Recordings.camera == camera_name)
++        # Ingest accepts only segments shorter than MAX_SEGMENT_DURATION.
++        .where(Recordings.start_time.between(start_ts - MAX_SEGMENT_DURATION, end_ts))
 +        .where(quality_filter)
          .order_by(Recordings.start_time.asc())
 -        .iterator()
      )
  
      clips = []
-@@ -599,7 +633,7 @@ async def vod_ts(
+@@ -599,7 +655,7 @@ async def vod_ts(
      max_duration_ms = MAX_SEGMENT_DURATION * 1000
  
      recording: Recordings
@@ -500,7 +522,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
          logger.debug(
              "VOD: processing recording: %s start=%s end=%s duration=%s",
              recording.path,
-@@ -700,6 +734,21 @@ async def vod_ts(
+@@ -700,6 +756,21 @@ async def vod_ts(
      )
  
  
@@ -522,7 +544,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
  @router.get(
      "/vod/{year_month}/{day}/{hour}/{camera_name}",
      dependencies=[Depends(require_camera_access)],
-@@ -718,7 +767,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
+@@ -718,7 +789,12 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
      description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
  )
  async def vod_hour(
@@ -536,7 +558,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
  ):
      parts = year_month.split("-")
      start_date = (
-@@ -729,7 +783,7 @@ async def vod_hour(
+@@ -729,7 +805,7 @@ async def vod_hour(
      start_ts = start_date.timestamp()
      end_ts = end_date.timestamp()
  
@@ -545,7 +567,7 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
  
  
  @router.get(
-@@ -784,8 +838,11 @@ async def vod_clip(
+@@ -784,8 +860,11 @@ async def vod_clip(
      camera_name: str,
      start_ts: float,
      end_ts: float,
@@ -559,9 +581,18 @@ index d6e2a7f8361f38b79cc1f202de47f81e8f3e1eaf..810d30c8eb056fd4a1397c35f5b97bcd
  
  @router.get(
 diff --git a/frigate/api/record.py b/frigate/api/record.py
-index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395b044a401 100644
+index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1a8437709c7f4c59520f6fe1bc177c4b976baefb 100644
 --- a/frigate/api/record.py
 +++ b/frigate/api/record.py
+@@ -25,7 +25,7 @@ from frigate.api.defs.query.recordings_query_parameters import (
+ )
+ from frigate.api.defs.response.generic_response import GenericResponse
+ from frigate.api.defs.tags import Tags
+-from frigate.const import RECORD_DIR
++from frigate.const import MAX_SEGMENT_DURATION, RECORD_DIR
+ from frigate.models import Event, Recordings
+ from frigate.util.time import get_dst_transitions
+ 
 @@ -168,6 +168,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
                  (Recordings.camera == camera_name)
                  & (Recordings.end_time >= period_start)
@@ -570,7 +601,12 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395
              )
              .group_by((Recordings.start_time + period_offset).cast("int") / 3600)
              .order_by(Recordings.start_time.desc())
-@@ -228,6 +229,7 @@ async def recordings(
+@@ -224,10 +225,11 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
+ 
+ 
+ @router.get("/{camera_name}/recordings", dependencies=[Depends(require_camera_access)])
+-async def recordings(
++def recordings(
      camera_name: str,
      after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
      before: float = datetime.now().timestamp(),
@@ -578,7 +614,7 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395
  ):
      """Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used"""
      recordings = (
-@@ -240,11 +242,13 @@ async def recordings(
+@@ -240,11 +242,14 @@ async def recordings(
              Recordings.objects,
              Recordings.motion_heatmap,
              Recordings.duration,
@@ -587,12 +623,13 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395
          .where(
              Recordings.camera == camera_name,
              Recordings.end_time >= after,
++            Recordings.start_time >= after - MAX_SEGMENT_DURATION,
              Recordings.start_time <= before,
 +            Recordings.stream_quality == quality,
          )
          .order_by(Recordings.start_time)
          .dicts()
-@@ -254,6 +258,77 @@ async def recordings(
+@@ -254,6 +259,79 @@ async def recordings(
      return JSONResponse(content=list(recordings))
  
  
@@ -612,7 +649,7 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395
 +    dependencies=[Depends(require_camera_access)],
 +    operation_id="main_stream_availability",
 +)
-+async def main_stream_availability(
++def main_stream_availability(
 +    camera_name: str,
 +    after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
 +    before: float = datetime.now().timestamp(),
@@ -640,9 +677,10 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395
 +            status_code=400,
 +        )
 +
-+    # Uses the (camera, start_time) DB index via the ORM's compound WHERE.
-+    # LIMIT is applied +1 so we can detect truncation without an extra
-+    # COUNT(*) pass.
++    # Ingest rejects segments >= MAX_SEGMENT_DURATION. Bound both sides of
++    # the (camera, stream_quality, start_time) index without losing overlaps.
++    # A synchronous route keeps SQLite work in FastAPI's worker pool.
++    # Read one extra row to detect truncation without a COUNT(*) scan.
 +    query = (
 +        Recordings.select(
 +            Recordings.start_time,
@@ -651,6 +689,7 @@ index 5db257f48203e8875a69a83ad4ca8c07e40898ff..1bd50c08412b2c21b7143803475f2395
 +        .where(
 +            Recordings.camera == camera_name,
 +            Recordings.end_time >= after,
++            Recordings.start_time >= after - MAX_SEGMENT_DURATION,
 +            Recordings.start_time <= before,
 +            Recordings.stream_quality == "main",
 +        )
@@ -1172,10 +1211,10 @@ index 71097f1d950602e8641172870b77d2c6a91ce3ab..cbad9330f3d22e449cc4585fa599aa20
          logger.debug("End all cameras.")
 diff --git a/frigate/record/event_recorder.py b/frigate/record/event_recorder.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f134382a929e5
+index 0000000000000000000000000000000000000000..33ab37719241ab9950577690c5c7a7e5ac6a831f
 --- /dev/null
 +++ b/frigate/record/event_recorder.py
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,367 @@
 +"""Record main stream segments during motion/detection events.
 +
 +The mainstream ffmpeg process for a camera with the ``record_events`` role
@@ -1210,6 +1249,7 @@ index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f1343
 +
 +from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeEnum
 +from frigate.config import CameraConfig, FrigateConfig
++from frigate.config.camera.objects import FilterConfig
 +from frigate.const import (
 +    CACHE_DIR,
 +    CACHE_SEGMENT_FORMAT,
@@ -1355,7 +1395,9 @@ index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f1343
 +                    )
 +
 +    @staticmethod
-+    def _is_object_active(obj: dict, obj_filters: dict, camera_fps: int) -> bool:
++    def _is_object_active(
++        obj: dict, obj_filters: dict[str, FilterConfig], camera_fps: int
++    ) -> bool:
 +        """Return True if the tracked object should be treated as active
 +        (i.e. should trigger or sustain mainstream event recording).
 +
@@ -1541,10 +1583,22 @@ index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f1343
 +    ) -> None:  # pragma: no cover - retained for API compat
 +        return
 diff --git a/frigate/record/export.py b/frigate/record/export.py
-index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a98197cb9d728 100644
+index 00addda124f4de0b526bcc126302826fd03fde9c..1d08ab45fba2884cb05fab95631802a67799df83 100644
 --- a/frigate/record/export.py
 +++ b/frigate/record/export.py
-@@ -202,6 +202,36 @@ class PlaybackSourceEnum(str, Enum):
+@@ -12,9 +12,10 @@ import threading
+ from collections.abc import Callable
+ from enum import Enum
+ from pathlib import Path
++from typing import cast
+ 
+ import pytz  # type: ignore[import-untyped]
+-from peewee import DoesNotExist
++from peewee import DoesNotExist, Expression
+ 
+ from frigate.config import FfmpegConfig, FrigateConfig
+ from frigate.config.camera.record import ChaptersEnum
+@@ -202,6 +203,40 @@ class PlaybackSourceEnum(str, Enum):
      preview = "preview"
  
  
@@ -1561,7 +1615,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
 +    sub = "sub"
 +
 +
-+def recordings_quality_filter(quality: str):
++def recordings_quality_filter(quality: str) -> Expression:
 +    """Peewee predicate matching vod_ts stream-quality semantics (api/media.py).
 +
 +    main: the stream_quality column is authoritative, with the _main.mp4 path
@@ -1569,19 +1623,23 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
 +    sub: sub or untagged rows, excluding anything that looks like main.
 +    """
 +    if quality == ExportQualityEnum.main.value:
-+        return (Recordings.stream_quality == "main") | Recordings.path.endswith(
-+            "_main.mp4"
++        return cast(
++            Expression,
++            (Recordings.stream_quality == "main")
++            | Recordings.path.endswith("_main.mp4"),
 +        )
 +
-+    return (
-+        (Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null())
-+    ) & ~Recordings.path.endswith("_main.mp4")
++    return cast(
++        Expression,
++        ((Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null()))
++        & ~Recordings.path.endswith("_main.mp4"),
++    )
 +
 +
  class RecordingExporter(threading.Thread):
      """Exports a specific set of recordings for a camera to storage as a single file."""
  
-@@ -221,6 +251,7 @@ class RecordingExporter(threading.Thread):
+@@ -221,6 +256,7 @@ class RecordingExporter(threading.Thread):
          cpu_fallback: bool = False,
          chapters: ChaptersEnum | None = None,
          on_progress: Callable[[str, float], None] | None = None,
@@ -1589,7 +1647,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
      ) -> None:
          super().__init__()
          self.config = config
-@@ -237,6 +268,12 @@ class RecordingExporter(threading.Thread):
+@@ -237,6 +273,12 @@ class RecordingExporter(threading.Thread):
          self.cpu_fallback = cpu_fallback
          self.chapters = chapters
          self.on_progress = on_progress
@@ -1602,7 +1660,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
  
          # ensure export thumb dir
          Path(os.path.join(CLIPS_DIR, "export")).mkdir(exist_ok=True)
-@@ -684,6 +721,48 @@ class RecordingExporter(threading.Thread):
+@@ -684,6 +726,48 @@ class RecordingExporter(threading.Thread):
  
          return thumb_path
  
@@ -1651,7 +1709,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
      def get_record_export_command(
          self, video_path: str, use_hwaccel: bool = True
      ) -> tuple[list[str], str | list[str]]:
-@@ -692,6 +771,20 @@ class RecordingExporter(threading.Thread):
+@@ -692,6 +776,20 @@ class RecordingExporter(threading.Thread):
          if type(internal_port) is str:
              internal_port = int(internal_port.split(":")[-1])
  
@@ -1672,7 +1730,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
          recordings = list(
              Recordings.select(
                  Recordings.start_time,
-@@ -706,13 +799,14 @@ class RecordingExporter(threading.Thread):
+@@ -706,13 +804,14 @@ class RecordingExporter(threading.Thread):
                  )
              )
              .where(Recordings.camera == self.camera)
@@ -1688,7 +1746,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
              ffmpeg_input = (
                  f"-y -protocol_whitelist pipe,file,http,tcp -i {playlist_url}"
              )
-@@ -723,7 +817,7 @@ class RecordingExporter(threading.Thread):
+@@ -723,7 +822,7 @@ class RecordingExporter(threading.Thread):
              for i in range(0, len(recordings), page_size):
                  chunk = recordings[i : i + page_size]
                  playlist_lines.append(
@@ -1936,6 +1994,186 @@ index 624ed6e9a20115615862011cf2846922413ff805..68c0d839dba9ac1d06b01d5eaa085936
 +                self.stop_event,
 +            )
 +            event_recorder.start()
+diff --git a/frigate/test/http_api/test_http_dual_stream_playback.py b/frigate/test/http_api/test_http_dual_stream_playback.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..6c3248e0f22a78a5f5d0870018142a1d7a6667b8
+--- /dev/null
++++ b/frigate/test/http_api/test_http_dual_stream_playback.py
+@@ -0,0 +1,174 @@
++"""Regression tests for HD playback query cost and API responsiveness."""
++
++import threading
++from concurrent.futures import ThreadPoolExecutor
++from types import SimpleNamespace
++from unittest.mock import patch
++
++from frigate.models import Recordings
++from frigate.test.http_api.base_http_test import AuthTestClient, BaseTestHttp
++from frigate.util import media as media_util
++
++
++class TestDualStreamPlayback(BaseTestHttp):
++    def setUp(self):
++        super().setUp([Recordings])
++        self.app = super().create_app()
++
++    def insert_recording(self, name, start, end, quality="main", path=None):
++        Recordings.insert(
++            id=name,
++            camera="front_door",
++            path=path or f"/media/frigate/recordings/{name}.mp4",
++            start_time=start,
++            end_time=end,
++            duration=end - start,
++            stream_quality=quality,
++        ).execute()
++
++    def assert_responsive(self, path, target, slow_result):
++        started = threading.Event()
++        release = threading.Event()
++        finished = threading.Event()
++
++        def slow(*args, **kwargs):
++            started.set()
++            release.wait(timeout=3)
++            finished.set()
++            return slow_result(*args, **kwargs)
++
++        with (
++            AuthTestClient(self.app) as client,
++            patch(target, side_effect=slow),
++            ThreadPoolExecutor(max_workers=1) as executor,
++        ):
++            pending = executor.submit(client.get, path)
++            self.assertTrue(started.wait(timeout=2))
++            try:
++                response = client.get("/version")
++                blocked = finished.is_set()
++            finally:
++                release.set()
++            self.assertEqual(response.status_code, 200)
++            self.assertFalse(blocked, "HD playback blocked an unrelated API request")
++            self.assertEqual(pending.result().status_code, 200)
++
++    def test_availability_does_not_block_api(self):
++        select = Recordings.select
++        self.assert_responsive(
++            "/front_door/recordings/main_availability?after=1000&before=1010",
++            "frigate.api.record.Recordings.select",
++            select,
++        )
++
++    def test_vod_probe_does_not_block_api(self):
++        self.insert_recording("clip", 995, 1010)
++        self.assert_responsive(
++            "/vod/front_door/start/1000/end/1008/quality/main",
++            "frigate.api.media.get_keyframe_before",
++            lambda *args: 4000,
++        )
++
++    def test_availability_retains_long_overlaps_and_bounds_index_scan(self):
++        self.insert_recording("long", 401, 1000)
++        self.insert_recording("hd", 1000, 1002)
++        self.insert_recording("sd", 1000, 1002, "sub")
++        self.insert_recording("old", 0, 2)
++        with (
++            AuthTestClient(self.app) as client,
++            patch.object(self.db, "execute_sql", wraps=self.db.execute_sql) as execute,
++        ):
++            response = client.get(
++                "/front_door/recordings/main_availability?after=999&before=1002"
++            )
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(
++            response.json(),
++            {
++                "ranges": [
++                    {"start_time": 401.0, "end_time": 1000.0},
++                    {"start_time": 1000.0, "end_time": 1002.0},
++                ],
++                "truncated": False,
++            },
++        )
++        sql, params = next(
++            call.args[:2]
++            for call in execute.call_args_list
++            if call.args[0].startswith("SELECT") and '"stream_quality"' in call.args[0]
++        )
++        plan = self.db.execute_sql("EXPLAIN QUERY PLAN " + sql, params).fetchall()
++        detail = " ".join(row[3] for row in plan)
++        self.assertIn("start_time>?", detail)
++        self.assertIn("start_time<?", detail)
++
++    def test_vod_keeps_keyframe_snap_and_legacy_main_rows(self):
++        self.insert_recording("long", 401, 1000, "sub", "/media/long_main.mp4")
++        self.insert_recording("sd", 999, 1002, "sub")
++        with (
++            AuthTestClient(self.app) as client,
++            patch("frigate.api.media.get_keyframe_before", return_value=597000),
++        ):
++            hd = client.get("/vod/front_door/start/999/end/1000/quality/main")
++            sd = client.get("/vod/front_door/start/999/end/1000")
++            absent = client.get("/vod/front_door/start/2000/end/2002/quality/main")
++        self.assertEqual(hd.status_code, 200)
++        clip = hd.json()["sequences"][0]["clips"][0]
++        self.assertEqual(clip["path"], "/media/long_main.mp4")
++        self.assertEqual(clip["clipFrom"], 597000)
++        self.assertEqual(hd.json()["durations"], [2000])
++        self.assertNotIn("long_main.mp4", str(sd.json()))
++        self.assertEqual(absent.status_code, 404)
++
++    def test_availability_window_validation_and_camera_auth_remain(self):
++        with AuthTestClient(self.app) as client:
++            self.assertEqual(
++                client.get(
++                    "/front_door/recordings/main_availability?after=1000&before=999"
++                ).status_code,
++                400,
++            )
++            self.assertEqual(
++                client.get(
++                    "/front_door/recordings/main_availability?after=0&before=604801"
++                ).status_code,
++                400,
++            )
++            self.app.frigate_config.auth.roles["restricted"] = ["back_door"]
++            self.assertEqual(
++                client.get(
++                    "/front_door/recordings/main_availability?after=999&before=1000",
++                    headers={"remote-user": "viewer", "remote-role": "restricted"},
++                ).status_code,
++                403,
++            )
++
++    def test_keyframe_probe_cached_by_path_not_seek_offset(self):
++        result = SimpleNamespace(returncode=0, stdout=b"0.0,K_\n1.0,__\n2.0,K_\n")
++        with patch("frigate.util.media.sp.run", return_value=result) as probe:
++            self.assertEqual(
++                media_util.get_keyframe_before("/unique/cache.mp4", 1500), 0
++            )
++            self.assertEqual(
++                media_util.get_keyframe_before("/unique/cache.mp4", 2500), 2000
++            )
++        self.assertEqual(probe.call_count, 1)
++
++    def test_failed_keyframe_probe_is_retried(self):
++        results = [
++            SimpleNamespace(returncode=1, stdout=b""),
++            SimpleNamespace(returncode=0, stdout=b"0.0,K_\n"),
++        ]
++        with patch("frigate.util.media.sp.run", side_effect=results) as probe:
++            self.assertIsNone(media_util.get_keyframe_before("/unique/retry.mp4", 500))
++            self.assertEqual(
++                media_util.get_keyframe_before("/unique/retry.mp4", 500), 0
++            )
++        self.assertEqual(probe.call_count, 2)
++
++    def test_keyframe_snap_does_not_round_forward(self):
++        result = SimpleNamespace(returncode=0, stdout=b"0.0,K_\n0.0019,K_\n")
++        with patch("frigate.util.media.sp.run", return_value=result):
++            self.assertEqual(
++                media_util.get_keyframe_before("/unique/fraction.mp4", 1), 0
++            )
 diff --git a/frigate/test/test_dual_stream_config.py b/frigate/test/test_dual_stream_config.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..ad6e1f1208254b811fdcf3896be76d2f34c9d1a7
@@ -4354,6 +4592,112 @@ index 0000000000000000000000000000000000000000..ff489335aa69642c7894cb38fc75edc6
 +
 +if __name__ == "__main__":
 +    unittest.main()
+diff --git a/frigate/util/media.py b/frigate/util/media.py
+index e4e84e9149c5b9377f28f62933e3b104e9942039..6527b43052e4ad677877bce36e1f82ec02a5a7e9 100644
+--- a/frigate/util/media.py
++++ b/frigate/util/media.py
+@@ -3,10 +3,12 @@
+ import datetime
+ import errno
+ import logging
++import math
+ import os
+ import subprocess as sp
+ from collections.abc import Iterable
+ from dataclasses import dataclass, field
++from functools import lru_cache
+ from pathlib import Path
+ 
+ from peewee import DatabaseError, chunked
+@@ -879,51 +881,48 @@ def sync_all_media(
+     return results
+ 
+ 
+-def get_keyframe_before(path: str, offset_ms: int) -> int | None:
+-    """Get the timestamp (ms) of the last keyframe at or before offset_ms.
+-
+-    Uses ffprobe packet index to read keyframe positions from the mp4 file.
+-    Returns None if ffprobe fails or no keyframe is found before the offset.
+-    """
+-    try:
+-        result = sp.run(
+-            [
+-                FFPROBE_PATH,
+-                "-select_streams",
+-                "v:0",
+-                "-show_entries",
+-                "packet=pts_time,flags",
+-                "-of",
+-                "csv=p=0",
+-                "-loglevel",
+-                "error",
+-                path,
+-            ],
+-            capture_output=True,
+-            timeout=5,
+-        )
+-    except (sp.TimeoutExpired, FileNotFoundError):
+-        return None
+-
++@lru_cache(maxsize=512)
++def _recording_keyframes(path: str) -> tuple[float, ...]:
++    """Cache successful probes of completed, immutable recording segments."""
++    result = sp.run(
++        [
++            FFPROBE_PATH,
++            "-select_streams",
++            "v:0",
++            "-show_entries",
++            "packet=pts_time,flags",
++            "-of",
++            "csv=p=0",
++            "-loglevel",
++            "error",
++            path,
++        ],
++        capture_output=True,
++        timeout=5,
++    )
+     if result.returncode != 0:
+-        return None
++        # Exceptions are not cached. A transient NFS failure can be retried.
++        raise ValueError("Unable to probe recording keyframes")
+ 
+-    offset_s = offset_ms / 1000.0
+-    best_ms = None
++    keyframes = []
+     for line in result.stdout.decode().strip().splitlines():
+         parts = line.strip().split(",")
+-        if len(parts) != 2:
+-            continue
+-        ts_str, flags = parts
+-        if "K" not in flags:
++        if len(parts) != 2 or "K" not in parts[1]:
+             continue
+         try:
+-            ts = float(ts_str)
+-        except ValueError:
++            timestamp_ms = float(parts[0]) * 1000
++            if math.isfinite(timestamp_ms):
++                keyframes.append(timestamp_ms)
++        except (ValueError, OverflowError):
+             continue
+-        if ts <= offset_s:
+-            best_ms = int(ts * 1000)
+-        else:
+-            break
++    return tuple(sorted(keyframes))
++
++
++def get_keyframe_before(path: str, offset_ms: int) -> int | None:
++    """Return the last keyframe at or before the offset, or None on probe failure."""
++    try:
++        keyframes = _recording_keyframes(path)
++    except (sp.TimeoutExpired, FileNotFoundError, ValueError):
++        return None
+ 
+-    return best_ms
++    return next((int(ts) for ts in reversed(keyframes) if ts <= offset_ms), None)
 diff --git a/frigate/video/ffmpeg.py b/frigate/video/ffmpeg.py
 index 67c0ac0e5d4e5c42826cb9700fbc0a1adfa76881..d09e004f0d21692c8ae19e92fdfc5aea6448c2cc 100644
 --- a/frigate/video/ffmpeg.py
@@ -4514,10 +4858,10 @@ index 0000000000000000000000000000000000000000..8211acf3c539eef26df6c0c005614ad6
 +    pass
 diff --git a/web/e2e/specs/dual-stream.spec.ts b/web/e2e/specs/dual-stream.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..19964c874d301dbe372760046da825b69fe6209d
+index 0000000000000000000000000000000000000000..bf7aa2a85d473a8fb38f4af3f58b3ea7cac673b8
 --- /dev/null
 +++ b/web/e2e/specs/dual-stream.spec.ts
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,143 @@
 +import { test, expect, type FrigateApp } from "../fixtures/frigate-test";
 +import { configFactory } from "../fixtures/mock-data/config";
 +
@@ -4589,6 +4933,76 @@ index 0000000000000000000000000000000000000000..19964c874d301dbe372760046da825b6
 +    await expect(toggle).toHaveText("HD");
 +    await toggle.click();
 +    await expect(toggle).toHaveText("SD");
++  });
++});
++
++async function openTrackedObjectVideo(app: FrigateApp) {
++  await app.page.route("**/api/review/event/*", (route) =>
++    route.fulfill({ json: null }),
++  );
++  await app.goto("/explore?labels=person");
++  const first = app.page.locator('img[src*="thumbnail.webp"]').first();
++  await expect(first).toBeVisible();
++  await first.click();
++  await app.page
++    .getByLabel("Select video", { exact: true })
++    .click();
++}
++
++test.describe("Tracked object playback recovery @critical @mobile", () => {
++  test("slow HD availability falls back to SD within a bounded time", async ({
++    frigateApp,
++  }) => {
++    await frigateApp.page.route(
++      "**/api/*/recordings/main_availability**",
++      async (route) => {
++        await new Promise((resolve) => setTimeout(resolve, 6000));
++        await route
++          .fulfill({ json: { ranges: [], truncated: false } })
++          .catch(() => {});
++      },
++    );
++    const playlist = frigateApp.page.waitForRequest(
++      (request) =>
++        request.url().includes("/vod/") && request.url().endsWith("index.m3u8"),
++    );
++    await openTrackedObjectVideo(frigateApp);
++    const request = await playlist;
++    expect(request.url()).not.toContain("/quality/main/");
++  });
++
++  test("HD playlist failure falls back to SD and clears the spinner on terminal failure", async ({
++    frigateApp,
++  }) => {
++    await frigateApp.page.route(
++      "**/api/*/recordings/main_availability**",
++      (route) =>
++        route.fulfill({
++          json: {
++            ranges: [{ start_time: 0, end_time: 9999999999 }],
++            truncated: false,
++          },
++        }),
++    );
++    const requests: string[] = [];
++    await frigateApp.page.route("**/vod/**", (route) => {
++      requests.push(route.request().url());
++      return route.fulfill({ status: 404, body: "No recordings" });
++    });
++    await openTrackedObjectVideo(frigateApp);
++    await expect
++      .poll(() => requests.some((url) => url.includes("/quality/main/")))
++      .toBe(true);
++    await expect
++      .poll(() => requests.some((url) => !url.includes("/quality/main/")), {
++        timeout: 20000,
++      })
++      .toBe(true);
++    await expect(
++      frigateApp.page.getByText("No recordings found for this time", {
++        exact: true,
++      }),
++    ).toBeVisible({ timeout: 20000 });
 +  });
 +});
 diff --git a/web/src/components/card/ReviewCard.tsx b/web/src/components/card/ReviewCard.tsx
@@ -4945,7 +5359,7 @@ index 4b89e90c693e2988aeeaae1f05155b42bb850dab..8be7383fbd3f9b722810bed7f8ada6b1
          <div className="space-y-2">
            <Label className="text-sm text-secondary-foreground">
 diff --git a/web/src/components/overlay/detail/SearchDetailDialog.tsx b/web/src/components/overlay/detail/SearchDetailDialog.tsx
-index 7d6b7c465ca2907a93359aff99cd2f9a705ac2e5..4654a9db45ddb87d427c1ebcd30c3dd561e4f1eb 100644
+index 7d6b7c465ca2907a93359aff99cd2f9a705ac2e5..e0ef2625678a58e00bfc04d6dd38a91a313d8497 100644
 --- a/web/src/components/overlay/detail/SearchDetailDialog.tsx
 +++ b/web/src/components/overlay/detail/SearchDetailDialog.tsx
 @@ -95,7 +95,7 @@ import { PiSlidersHorizontalBold } from "react-icons/pi";
@@ -5042,7 +5456,7 @@ index 7d6b7c465ca2907a93359aff99cd2f9a705ac2e5..4654a9db45ddb87d427c1ebcd30c3dd5
      }
  
      return views;
-@@ -1894,7 +1952,55 @@ export function VideoTab({ search }: VideoTabProps) {
+@@ -1894,12 +1952,72 @@ export function VideoTab({ search }: VideoTabProps) {
      return `start/${startTime}/end/${endTime}`;
    }, [search]);
  
@@ -5061,12 +5475,15 @@ index 7d6b7c465ca2907a93359aff99cd2f9a705ac2e5..4654a9db45ddb87d427c1ebcd30c3dd5
 +  const [useMain, setUseMain] = useState<boolean | null>(null);
 +  useEffect(() => {
 +    let cancelled = false;
++    const controller = new AbortController();
 +    setUseMain(null);
 +    const after = search.start_time - REVIEW_PADDING;
 +    const before = (search.end_time ?? Date.now() / 1000) + REVIEW_PADDING;
 +    axios
 +      .get(`${search.camera}/recordings/main_availability`, {
 +        params: { after, before },
++        timeout: 4000,
++        signal: controller.signal,
 +      })
 +      .then((resp) => {
 +        if (cancelled) return;
@@ -5083,8 +5500,13 @@ index 7d6b7c465ca2907a93359aff99cd2f9a705ac2e5..4654a9db45ddb87d427c1ebcd30c3dd5
 +      });
 +    return () => {
 +      cancelled = true;
++      controller.abort();
 +    };
 +  }, [search.camera, search.start_time, search.end_time]);
++
++  const handlePlaybackError = useCallback(() => {
++    setUseMain(false);
++  }, []);
 +
 +  if (useMain === null) {
 +    return (
@@ -5099,6 +5521,157 @@ index 7d6b7c465ca2907a93359aff99cd2f9a705ac2e5..4654a9db45ddb87d427c1ebcd30c3dd5
  
    return (
      <>
+       <span tabIndex={0} className="sr-only" />
+-      <GenericVideoPlayer source={source} />
++      <GenericVideoPlayer
++        key={source}
++        source={source}
++        onError={useMain ? handlePlaybackError : undefined}
++      />
+     </>
+   );
+ }
+diff --git a/web/src/components/player/GenericVideoPlayer.tsx b/web/src/components/player/GenericVideoPlayer.tsx
+index 25399771bf8b3ea51ac35554587ed5b341aae684..92f6a9dd7647b416c6f479c7acf2db3c8a86d8f2 100644
+--- a/web/src/components/player/GenericVideoPlayer.tsx
++++ b/web/src/components/player/GenericVideoPlayer.tsx
+@@ -9,18 +9,23 @@ import { useVideoDimensions } from "@/hooks/use-video-dimensions";
+ import HlsVideoPlayer from "./HlsVideoPlayer";
+ import ActivityIndicator from "../indicators/activity-indicator";
+ import useKeyboardListener from "@/hooks/use-keyboard-listener";
++import { useTranslation } from "react-i18next";
++import { RecordingPlayerError } from "@/types/record";
+ 
+ type GenericVideoPlayerProps = {
+   source: string;
+   onPlaying?: () => void;
++  onError?: (error: RecordingPlayerError) => void;
+   children?: React.ReactNode;
+ };
+ 
+ export function GenericVideoPlayer({
+   source,
+   onPlaying,
++  onError,
+   children,
+ }: GenericVideoPlayerProps) {
++  const { t } = useTranslation("components/player");
+   const [isLoading, setIsLoading] = useState(true);
+   const [sourceExists, setSourceExists] = useState(true);
+   const videoRef = useRef<HTMLVideoElement | null>(null);
+@@ -28,21 +33,27 @@ export function GenericVideoPlayer({
+   const { videoDimensions, setVideoResolution } =
+     useVideoDimensions(containerRef);
+ 
+-  useEffect(() => {
+-    const checkSourceExists = async (url: string) => {
+-      try {
+-        const response = await fetch(url, { method: "HEAD" });
+-        // nginx vod module returns 502 for non existent media
+-        // https://github.com/kaltura/nginx-vod-module/issues/468
+-        setSourceExists(response.status !== 502 && response.status !== 404);
+-      } catch (error) {
+-        setSourceExists(false);
+-      }
+-    };
++  const handleError = useCallback(
++    (error: RecordingPlayerError) => {
++      setIsLoading(false);
++      setSourceExists(false);
++      onError?.(error);
++    },
++    [onError],
++  );
+ 
+-    checkSourceExists(source);
++  useEffect(() => {
++    setIsLoading(true);
++    setSourceExists(true);
+   }, [source]);
+ 
++  useEffect(() => {
++    if (!isLoading) return;
++    // Bound startup even when the browser emits neither playing nor error.
++    const timer = setTimeout(() => handleError("startup"), 15000);
++    return () => clearTimeout(timer);
++  }, [source, isLoading, handleError]);
++
+   const onSeek = useCallback(
+     (diff: number) => {
+       const currentTime = videoRef.current?.currentTime;
+@@ -107,8 +118,8 @@ export function GenericVideoPlayer({
+     <div ref={containerRef} className="relative flex h-full w-full flex-col">
+       <div className="relative flex flex-grow items-center justify-center">
+         {!sourceExists ? (
+-          <div className="flex aspect-video w-full items-center justify-center bg-background_alt text-lg text-primary">
+-            Video not available
++          <div className="bg-background_alt text-primary flex aspect-video w-full items-center justify-center text-lg">
++            {t("noRecordingsFoundForThisTime")}
+           </div>
+         ) : (
+           <>
+@@ -131,6 +142,7 @@ export function GenericVideoPlayer({
+                   setIsLoading(false);
+                   onPlaying?.();
+                 }}
++                onError={handleError}
+                 setFullResolution={setVideoResolution}
+               />
+               {!isLoading && children}
+diff --git a/web/src/components/player/HlsVideoPlayer.tsx b/web/src/components/player/HlsVideoPlayer.tsx
+index a09b8a4e8d34735379fe2d91c9d482f06b9404cd..547eab0082116601b99bd81058e922cded7b22fb 100644
+--- a/web/src/components/player/HlsVideoPlayer.tsx
++++ b/web/src/components/player/HlsVideoPlayer.tsx
+@@ -101,6 +101,8 @@ export default function HlsVideoPlayer({
+   // playback
+ 
+   const hlsRef = useRef<Hls>(undefined);
++  const onErrorRef = useRef(onError);
++  onErrorRef.current = onError;
+   const [useHlsCompat, setUseHlsCompat] = useState(false);
+   const [loadedMetadata, setLoadedMetadata] = useState(false);
+   const [bufferTimeout, setBufferTimeout] = useState<NodeJS.Timeout>();
+@@ -186,9 +188,21 @@ export default function HlsVideoPlayer({
+       startPosition: currentSource.startPosition,
+     };
+ 
+-    hlsRef.current = new Hls(hlsConfig);
+-    hlsRef.current.attachMedia(videoRef.current);
+-    hlsRef.current.loadSource(currentSource.playlist);
++    const hls = new Hls(hlsConfig);
++    hlsRef.current = hls;
++    let mediaRecoveryAttempted = false;
++    hls.on(Hls.Events.ERROR, (_event, data) => {
++      if (!data.fatal) return;
++      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryAttempted) {
++        mediaRecoveryAttempted = true;
++        hls.recoverMediaError();
++      } else {
++        hls.destroy();
++        onErrorRef.current?.("startup");
++      }
++    });
++    hls.attachMedia(videoRef.current);
++    hls.loadSource(currentSource.playlist);
+     videoRef.current.playbackRate = currentPlaybackRate;
+ 
+     return () => {
+@@ -197,6 +211,7 @@ export default function HlsVideoPlayer({
+       // set at the optimal point in time
+       if (hlsRef.current) {
+         hlsRef.current.destroy();
++        hlsRef.current = undefined;
+       }
+     };
+   }, [videoRef, hlsRef, useHlsCompat, currentSource]);
+@@ -566,6 +581,7 @@ export default function HlsVideoPlayer({
+                 setLoadedMetadata(false);
+                 setUseHlsCompat(true);
+               } else {
++                onErrorRef.current?.("startup");
+                 toast.error(
+                   // @ts-expect-error code does exist
+                   `Failed to play recordings (error ${e.target.error.code}): ${e.target.error.message}`,
 diff --git a/web/src/components/player/dynamic/DynamicVideoPlayer.tsx b/web/src/components/player/dynamic/DynamicVideoPlayer.tsx
 index 8998be7a607c886fecd0c270ee2f71c3ca758831..f3c8b250c11c9db665bcb26db418da4ce4b75eba 100644
 --- a/web/src/components/player/dynamic/DynamicVideoPlayer.tsx

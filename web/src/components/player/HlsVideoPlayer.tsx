@@ -101,6 +101,8 @@ export default function HlsVideoPlayer({
   // playback
 
   const hlsRef = useRef<Hls>(undefined);
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
   const [useHlsCompat, setUseHlsCompat] = useState(false);
   const [loadedMetadata, setLoadedMetadata] = useState(false);
   const [bufferTimeout, setBufferTimeout] = useState<NodeJS.Timeout>();
@@ -186,9 +188,21 @@ export default function HlsVideoPlayer({
       startPosition: currentSource.startPosition,
     };
 
-    hlsRef.current = new Hls(hlsConfig);
-    hlsRef.current.attachMedia(videoRef.current);
-    hlsRef.current.loadSource(currentSource.playlist);
+    const hls = new Hls(hlsConfig);
+    hlsRef.current = hls;
+    let mediaRecoveryAttempted = false;
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryAttempted) {
+        mediaRecoveryAttempted = true;
+        hls.recoverMediaError();
+      } else {
+        hls.destroy();
+        onErrorRef.current?.("startup");
+      }
+    });
+    hls.attachMedia(videoRef.current);
+    hls.loadSource(currentSource.playlist);
     videoRef.current.playbackRate = currentPlaybackRate;
 
     return () => {
@@ -197,6 +211,7 @@ export default function HlsVideoPlayer({
       // set at the optimal point in time
       if (hlsRef.current) {
         hlsRef.current.destroy();
+        hlsRef.current = undefined;
       }
     };
   }, [videoRef, hlsRef, useHlsCompat, currentSource]);
@@ -566,6 +581,7 @@ export default function HlsVideoPlayer({
                 setLoadedMetadata(false);
                 setUseHlsCompat(true);
               } else {
+                onErrorRef.current?.("startup");
                 toast.error(
                   // @ts-expect-error code does exist
                   `Failed to play recordings (error ${e.target.error.code}): ${e.target.error.message}`,

@@ -32,6 +32,7 @@ from pathlib import Path
 
 from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeEnum
 from frigate.config import CameraConfig, FrigateConfig
+from frigate.config.camera.objects import FilterConfig
 from frigate.const import (
     CACHE_DIR,
     CACHE_SEGMENT_FORMAT,
@@ -177,7 +178,9 @@ class EventRecorder(threading.Thread):
                     )
 
     @staticmethod
-    def _is_object_active(obj: dict, obj_filters: dict, camera_fps: int) -> bool:
+    def _is_object_active(
+        obj: dict, obj_filters: dict[str, FilterConfig], camera_fps: int
+    ) -> bool:
         """Return True if the tracked object should be treated as active
         (i.e. should trigger or sustain mainstream event recording).
 

@@ -1966,12 +1966,15 @@ export function VideoTab({ search }: VideoTabProps) {
   const [useMain, setUseMain] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setUseMain(null);
     const after = search.start_time - REVIEW_PADDING;
     const before = (search.end_time ?? Date.now() / 1000) + REVIEW_PADDING;
     axios
       .get(`${search.camera}/recordings/main_availability`, {
         params: { after, before },
+        timeout: 4000,
+        signal: controller.signal,
       })
       .then((resp) => {
         if (cancelled) return;
@@ -1988,8 +1991,13 @@ export function VideoTab({ search }: VideoTabProps) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [search.camera, search.start_time, search.end_time]);
+
+  const handlePlaybackError = useCallback(() => {
+    setUseMain(false);
+  }, []);
 
   if (useMain === null) {
     return (
@@ -2005,7 +2013,11 @@ export function VideoTab({ search }: VideoTabProps) {
   return (
     <>
       <span tabIndex={0} className="sr-only" />
-      <GenericVideoPlayer source={source} />
+      <GenericVideoPlayer
+        key={source}
+        source={source}
+        onError={useMain ? handlePlaybackError : undefined}
+      />
     </>
   );
 }

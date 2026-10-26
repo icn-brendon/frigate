@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Run dual-stream and adjacent upstream regressions in separate processes."""
 
+import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 MODULES = [
     "test_dual_stream_config",
@@ -16,6 +19,8 @@ MODULES = [
     "test_record_retention",
     "test_export",
     "test_export_progress",
+    "http_api.test_http_dual_stream_playback",
+    "http_api.test_http_media",
 ]
 
 
@@ -36,10 +41,15 @@ def main() -> int:
         failed.append("API schema")
     for name in MODULES:
         print(f"\n=== {name} ===", flush=True)
-        result = subprocess.run(
-            [sys.executable, "-u", "-m", "unittest", f"frigate.test.{name}"],
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="frigate-bench-") as directory:
+            root = Path.cwd()
+            Path(directory, "migrations").symlink_to(root / "migrations")
+            result = subprocess.run(
+                [sys.executable, "-u", "-m", "unittest", f"frigate.test.{name}"],
+                check=False,
+                cwd=directory if name.startswith("http_api.") else root,
+                env={**os.environ, "PYTHONPATH": str(root)},
+            )
         if result.returncode:
             failed.append(name)
     if failed:
