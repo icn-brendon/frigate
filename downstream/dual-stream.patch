@@ -1977,10 +1977,10 @@ index 624ed6e9a20115615862011cf2846922413ff805..68c0d839dba9ac1d06b01d5eaa085936
 +            event_recorder.start()
 diff --git a/frigate/test/http_api/test_http_dual_stream_playback.py b/frigate/test/http_api/test_http_dual_stream_playback.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..683731abf13a03af39e7fdc97b834ef3ba328482
+index 0000000000000000000000000000000000000000..6c3248e0f22a78a5f5d0870018142a1d7a6667b8
 --- /dev/null
 +++ b/frigate/test/http_api/test_http_dual_stream_playback.py
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,174 @@
 +"""Regression tests for HD playback query cost and API responsiveness."""
 +
 +import threading
@@ -2152,7 +2152,9 @@ index 0000000000000000000000000000000000000000..683731abf13a03af39e7fdc97b834ef3
 +    def test_keyframe_snap_does_not_round_forward(self):
 +        result = SimpleNamespace(returncode=0, stdout=b"0.0,K_\n0.0019,K_\n")
 +        with patch("frigate.util.media.sp.run", return_value=result):
-+            self.assertEqual(media_util.get_keyframe_before("/unique/fraction.mp4", 1), 0)
++            self.assertEqual(
++                media_util.get_keyframe_before("/unique/fraction.mp4", 1), 0
++            )
 diff --git a/frigate/test/test_dual_stream_config.py b/frigate/test/test_dual_stream_config.py
 new file mode 100644
 index 0000000000000000000000000000000000000000..ad6e1f1208254b811fdcf3896be76d2f34c9d1a7
@@ -4837,10 +4839,10 @@ index 0000000000000000000000000000000000000000..8211acf3c539eef26df6c0c005614ad6
 +    pass
 diff --git a/web/e2e/specs/dual-stream.spec.ts b/web/e2e/specs/dual-stream.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a045ee49d8e884fe421a9102e3c9dddee8e22e13
+index 0000000000000000000000000000000000000000..bf7aa2a85d473a8fb38f4af3f58b3ea7cac673b8
 --- /dev/null
 +++ b/web/e2e/specs/dual-stream.spec.ts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,143 @@
 +import { test, expect, type FrigateApp } from "../fixtures/frigate-test";
 +import { configFactory } from "../fixtures/mock-data/config";
 +
@@ -4916,7 +4918,9 @@ index 0000000000000000000000000000000000000000..a045ee49d8e884fe421a9102e3c9ddde
 +});
 +
 +async function openTrackedObjectVideo(app: FrigateApp) {
-+  await app.page.route("**/api/review/event/*", (route) => route.fulfill({ json: null }));
++  await app.page.route("**/api/review/event/*", (route) =>
++    route.fulfill({ json: null }),
++  );
 +  await app.goto("/explore?labels=person");
 +  const first = app.page.locator('img[src*="thumbnail.webp"]').first();
 +  await expect(first).toBeVisible();
