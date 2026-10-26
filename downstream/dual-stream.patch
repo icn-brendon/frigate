@@ -1211,10 +1211,10 @@ index 71097f1d950602e8641172870b77d2c6a91ce3ab..cbad9330f3d22e449cc4585fa599aa20
          logger.debug("End all cameras.")
 diff --git a/frigate/record/event_recorder.py b/frigate/record/event_recorder.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f134382a929e5
+index 0000000000000000000000000000000000000000..33ab37719241ab9950577690c5c7a7e5ac6a831f
 --- /dev/null
 +++ b/frigate/record/event_recorder.py
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,367 @@
 +"""Record main stream segments during motion/detection events.
 +
 +The mainstream ffmpeg process for a camera with the ``record_events`` role
@@ -1249,6 +1249,7 @@ index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f1343
 +
 +from frigate.comms.detections_updater import DetectionSubscriber, DetectionTypeEnum
 +from frigate.config import CameraConfig, FrigateConfig
++from frigate.config.camera.objects import FilterConfig
 +from frigate.const import (
 +    CACHE_DIR,
 +    CACHE_SEGMENT_FORMAT,
@@ -1394,7 +1395,9 @@ index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f1343
 +                    )
 +
 +    @staticmethod
-+    def _is_object_active(obj: dict, obj_filters: dict, camera_fps: int) -> bool:
++    def _is_object_active(
++        obj: dict, obj_filters: dict[str, FilterConfig], camera_fps: int
++    ) -> bool:
 +        """Return True if the tracked object should be treated as active
 +        (i.e. should trigger or sustain mainstream event recording).
 +
@@ -1580,10 +1583,22 @@ index 0000000000000000000000000000000000000000..e06ee438a1dc69c4c531a7398f3f1343
 +    ) -> None:  # pragma: no cover - retained for API compat
 +        return
 diff --git a/frigate/record/export.py b/frigate/record/export.py
-index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a98197cb9d728 100644
+index 00addda124f4de0b526bcc126302826fd03fde9c..1d08ab45fba2884cb05fab95631802a67799df83 100644
 --- a/frigate/record/export.py
 +++ b/frigate/record/export.py
-@@ -202,6 +202,36 @@ class PlaybackSourceEnum(str, Enum):
+@@ -12,9 +12,10 @@ import threading
+ from collections.abc import Callable
+ from enum import Enum
+ from pathlib import Path
++from typing import cast
+ 
+ import pytz  # type: ignore[import-untyped]
+-from peewee import DoesNotExist
++from peewee import DoesNotExist, Expression
+ 
+ from frigate.config import FfmpegConfig, FrigateConfig
+ from frigate.config.camera.record import ChaptersEnum
+@@ -202,6 +203,40 @@ class PlaybackSourceEnum(str, Enum):
      preview = "preview"
  
  
@@ -1600,7 +1615,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
 +    sub = "sub"
 +
 +
-+def recordings_quality_filter(quality: str):
++def recordings_quality_filter(quality: str) -> Expression:
 +    """Peewee predicate matching vod_ts stream-quality semantics (api/media.py).
 +
 +    main: the stream_quality column is authoritative, with the _main.mp4 path
@@ -1608,19 +1623,23 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
 +    sub: sub or untagged rows, excluding anything that looks like main.
 +    """
 +    if quality == ExportQualityEnum.main.value:
-+        return (Recordings.stream_quality == "main") | Recordings.path.endswith(
-+            "_main.mp4"
++        return cast(
++            Expression,
++            (Recordings.stream_quality == "main")
++            | Recordings.path.endswith("_main.mp4"),
 +        )
 +
-+    return (
-+        (Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null())
-+    ) & ~Recordings.path.endswith("_main.mp4")
++    return cast(
++        Expression,
++        ((Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null()))
++        & ~Recordings.path.endswith("_main.mp4"),
++    )
 +
 +
  class RecordingExporter(threading.Thread):
      """Exports a specific set of recordings for a camera to storage as a single file."""
  
-@@ -221,6 +251,7 @@ class RecordingExporter(threading.Thread):
+@@ -221,6 +256,7 @@ class RecordingExporter(threading.Thread):
          cpu_fallback: bool = False,
          chapters: ChaptersEnum | None = None,
          on_progress: Callable[[str, float], None] | None = None,
@@ -1628,7 +1647,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
      ) -> None:
          super().__init__()
          self.config = config
-@@ -237,6 +268,12 @@ class RecordingExporter(threading.Thread):
+@@ -237,6 +273,12 @@ class RecordingExporter(threading.Thread):
          self.cpu_fallback = cpu_fallback
          self.chapters = chapters
          self.on_progress = on_progress
@@ -1641,7 +1660,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
  
          # ensure export thumb dir
          Path(os.path.join(CLIPS_DIR, "export")).mkdir(exist_ok=True)
-@@ -684,6 +721,48 @@ class RecordingExporter(threading.Thread):
+@@ -684,6 +726,48 @@ class RecordingExporter(threading.Thread):
  
          return thumb_path
  
@@ -1690,7 +1709,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
      def get_record_export_command(
          self, video_path: str, use_hwaccel: bool = True
      ) -> tuple[list[str], str | list[str]]:
-@@ -692,6 +771,20 @@ class RecordingExporter(threading.Thread):
+@@ -692,6 +776,20 @@ class RecordingExporter(threading.Thread):
          if type(internal_port) is str:
              internal_port = int(internal_port.split(":")[-1])
  
@@ -1711,7 +1730,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
          recordings = list(
              Recordings.select(
                  Recordings.start_time,
-@@ -706,13 +799,14 @@ class RecordingExporter(threading.Thread):
+@@ -706,13 +804,14 @@ class RecordingExporter(threading.Thread):
                  )
              )
              .where(Recordings.camera == self.camera)
@@ -1727,7 +1746,7 @@ index 00addda124f4de0b526bcc126302826fd03fde9c..a2802572b3b8a9bf34de4671d76a9819
              ffmpeg_input = (
                  f"-y -protocol_whitelist pipe,file,http,tcp -i {playlist_url}"
              )
-@@ -723,7 +817,7 @@ class RecordingExporter(threading.Thread):
+@@ -723,7 +822,7 @@ class RecordingExporter(threading.Thread):
              for i in range(0, len(recordings), page_size):
                  chunk = recordings[i : i + page_size]
                  playlist_lines.append(
