@@ -73,7 +73,9 @@ test.describe("Dual-stream release bench @critical @mobile", () => {
 });
 
 async function openTrackedObjectVideo(app: FrigateApp) {
-  await app.page.route("**/api/review/event/*", (route) => route.fulfill({ json: null }));
+  await app.page.route("**/api/review/event/*", (route) =>
+    route.fulfill({ json: null }),
+  );
   await app.goto("/explore?labels=person");
   const first = app.page.locator('img[src*="thumbnail.webp"]').first();
   await expect(first).toBeVisible();
