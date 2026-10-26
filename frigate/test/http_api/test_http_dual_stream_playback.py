@@ -165,3 +165,8 @@ class TestDualStreamPlayback(BaseTestHttp):
                 media_util.get_keyframe_before("/unique/retry.mp4", 500), 0
             )
         self.assertEqual(probe.call_count, 2)
+
+    def test_keyframe_snap_does_not_round_forward(self):
+        result = SimpleNamespace(returncode=0, stdout=b"0.0,K_\n0.0019,K_\n")
+        with patch("frigate.util.media.sp.run", return_value=result):
+            self.assertEqual(media_util.get_keyframe_before("/unique/fraction.mp4", 1), 0)

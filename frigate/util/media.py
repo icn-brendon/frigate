@@ -3,6 +3,7 @@
 import datetime
 import errno
 import logging
+import math
 import os
 import subprocess as sp
 from collections.abc import Iterable
@@ -881,7 +882,7 @@ def sync_all_media(
 
 
 @lru_cache(maxsize=512)
-def _recording_keyframes(path: str) -> tuple[int, ...]:
+def _recording_keyframes(path: str) -> tuple[float, ...]:
     """Cache successful probes of completed, immutable recording segments."""
     result = sp.run(
         [
@@ -909,7 +910,9 @@ def _recording_keyframes(path: str) -> tuple[int, ...]:
         if len(parts) != 2 or "K" not in parts[1]:
             continue
         try:
-            keyframes.append(int(float(parts[0]) * 1000))
+            timestamp_ms = float(parts[0]) * 1000
+            if math.isfinite(timestamp_ms):
+                keyframes.append(timestamp_ms)
         except (ValueError, OverflowError):
             continue
     return tuple(sorted(keyframes))
@@ -922,4 +925,4 @@ def get_keyframe_before(path: str, offset_ms: int) -> int | None:
     except (sp.TimeoutExpired, FileNotFoundError, ValueError):
         return None
 
-    return next((ts for ts in reversed(keyframes) if ts <= offset_ms), None)
+    return next((int(ts) for ts in reversed(keyframes) if ts <= offset_ms), None)
