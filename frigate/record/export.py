@@ -12,9 +12,10 @@ import threading
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
+from typing import cast
 
 import pytz  # type: ignore[import-untyped]
-from peewee import DoesNotExist
+from peewee import DoesNotExist, Expression
 
 from frigate.config import FfmpegConfig, FrigateConfig
 from frigate.config.camera.record import ChaptersEnum
@@ -215,7 +216,7 @@ class ExportQualityEnum(str, Enum):
     sub = "sub"
 
 
-def recordings_quality_filter(quality: str):
+def recordings_quality_filter(quality: str) -> Expression:
     """Peewee predicate matching vod_ts stream-quality semantics (api/media.py).
 
     main: the stream_quality column is authoritative, with the _main.mp4 path
@@ -223,13 +224,17 @@ def recordings_quality_filter(quality: str):
     sub: sub or untagged rows, excluding anything that looks like main.
     """
     if quality == ExportQualityEnum.main.value:
-        return (Recordings.stream_quality == "main") | Recordings.path.endswith(
-            "_main.mp4"
+        return cast(
+            Expression,
+            (Recordings.stream_quality == "main")
+            | Recordings.path.endswith("_main.mp4"),
         )
 
-    return (
-        (Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null())
-    ) & ~Recordings.path.endswith("_main.mp4")
+    return cast(
+        Expression,
+        ((Recordings.stream_quality == "sub") | (Recordings.stream_quality.is_null()))
+        & ~Recordings.path.endswith("_main.mp4"),
+    )
 
 
 class RecordingExporter(threading.Thread):
