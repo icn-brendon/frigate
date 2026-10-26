@@ -9,18 +9,23 @@ import { useVideoDimensions } from "@/hooks/use-video-dimensions";
 import HlsVideoPlayer from "./HlsVideoPlayer";
 import ActivityIndicator from "../indicators/activity-indicator";
 import useKeyboardListener from "@/hooks/use-keyboard-listener";
+import { useTranslation } from "react-i18next";
+import { RecordingPlayerError } from "@/types/record";
 
 type GenericVideoPlayerProps = {
   source: string;
   onPlaying?: () => void;
+  onError?: (error: RecordingPlayerError) => void;
   children?: React.ReactNode;
 };
 
 export function GenericVideoPlayer({
   source,
   onPlaying,
+  onError,
   children,
 }: GenericVideoPlayerProps) {
+  const { t } = useTranslation("components/player");
   const [isLoading, setIsLoading] = useState(true);
   const [sourceExists, setSourceExists] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -28,20 +33,26 @@ export function GenericVideoPlayer({
   const { videoDimensions, setVideoResolution } =
     useVideoDimensions(containerRef);
 
-  useEffect(() => {
-    const checkSourceExists = async (url: string) => {
-      try {
-        const response = await fetch(url, { method: "HEAD" });
-        // nginx vod module returns 502 for non existent media
-        // https://github.com/kaltura/nginx-vod-module/issues/468
-        setSourceExists(response.status !== 502 && response.status !== 404);
-      } catch (error) {
-        setSourceExists(false);
-      }
-    };
+  const handleError = useCallback(
+    (error: RecordingPlayerError) => {
+      setIsLoading(false);
+      setSourceExists(false);
+      onError?.(error);
+    },
+    [onError],
+  );
 
-    checkSourceExists(source);
+  useEffect(() => {
+    setIsLoading(true);
+    setSourceExists(true);
   }, [source]);
+
+  useEffect(() => {
+    if (!isLoading) return;
+    // Bound startup even when the browser emits neither playing nor error.
+    const timer = setTimeout(() => handleError("startup"), 15000);
+    return () => clearTimeout(timer);
+  }, [source, isLoading, handleError]);
 
   const onSeek = useCallback(
     (diff: number) => {
@@ -107,8 +118,8 @@ export function GenericVideoPlayer({
     <div ref={containerRef} className="relative flex h-full w-full flex-col">
       <div className="relative flex flex-grow items-center justify-center">
         {!sourceExists ? (
-          <div className="flex aspect-video w-full items-center justify-center bg-background_alt text-lg text-primary">
-            Video not available
+          <div className="bg-background_alt text-primary flex aspect-video w-full items-center justify-center text-lg">
+            {t("noRecordingsFoundForThisTime")}
           </div>
         ) : (
           <>
@@ -131,6 +142,7 @@ export function GenericVideoPlayer({
                   setIsLoading(false);
                   onPlaying?.();
                 }}
+                onError={handleError}
                 setFullResolution={setVideoResolution}
               />
               {!isLoading && children}

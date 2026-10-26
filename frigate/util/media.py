@@ -7,6 +7,7 @@ import os
 import subprocess as sp
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from peewee import DatabaseError, chunked
@@ -879,51 +880,46 @@ def sync_all_media(
     return results
 
 
-def get_keyframe_before(path: str, offset_ms: int) -> int | None:
-    """Get the timestamp (ms) of the last keyframe at or before offset_ms.
-
-    Uses ffprobe packet index to read keyframe positions from the mp4 file.
-    Returns None if ffprobe fails or no keyframe is found before the offset.
-    """
-    try:
-        result = sp.run(
-            [
-                FFPROBE_PATH,
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "packet=pts_time,flags",
-                "-of",
-                "csv=p=0",
-                "-loglevel",
-                "error",
-                path,
-            ],
-            capture_output=True,
-            timeout=5,
-        )
-    except (sp.TimeoutExpired, FileNotFoundError):
-        return None
-
+@lru_cache(maxsize=512)
+def _recording_keyframes(path: str) -> tuple[int, ...]:
+    """Cache successful probes of completed, immutable recording segments."""
+    result = sp.run(
+        [
+            FFPROBE_PATH,
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "csv=p=0",
+            "-loglevel",
+            "error",
+            path,
+        ],
+        capture_output=True,
+        timeout=5,
+    )
     if result.returncode != 0:
-        return None
+        # Exceptions are not cached. A transient NFS failure can be retried.
+        raise ValueError("Unable to probe recording keyframes")
 
-    offset_s = offset_ms / 1000.0
-    best_ms = None
+    keyframes = []
     for line in result.stdout.decode().strip().splitlines():
         parts = line.strip().split(",")
-        if len(parts) != 2:
-            continue
-        ts_str, flags = parts
-        if "K" not in flags:
+        if len(parts) != 2 or "K" not in parts[1]:
             continue
         try:
-            ts = float(ts_str)
-        except ValueError:
+            keyframes.append(int(float(parts[0]) * 1000))
+        except (ValueError, OverflowError):
             continue
-        if ts <= offset_s:
-            best_ms = int(ts * 1000)
-        else:
-            break
+    return tuple(sorted(keyframes))
 
-    return best_ms
+
+def get_keyframe_before(path: str, offset_ms: int) -> int | None:
+    """Return the last keyframe at or before the offset, or None on probe failure."""
+    try:
+        keyframes = _recording_keyframes(path)
+    except (sp.TimeoutExpired, FileNotFoundError, ValueError):
+        return None
+
+    return next((ts for ts in reversed(keyframes) if ts <= offset_ms), None)

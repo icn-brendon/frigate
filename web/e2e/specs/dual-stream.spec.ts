@@ -71,3 +71,71 @@ test.describe("Dual-stream release bench @critical @mobile", () => {
     await expect(toggle).toHaveText("SD");
   });
 });
+
+async function openTrackedObjectVideo(app: FrigateApp) {
+  await app.page.route("**/api/review/event/*", (route) => route.fulfill({ json: null }));
+  await app.goto("/explore?labels=person");
+  const first = app.page.locator('img[src*="thumbnail.webp"]').first();
+  await expect(first).toBeVisible();
+  await first.click();
+  await app.page
+    .getByLabel("Select video", { exact: true })
+    .click();
+}
+
+test.describe("Tracked object playback recovery @critical @mobile", () => {
+  test("slow HD availability falls back to SD within a bounded time", async ({
+    frigateApp,
+  }) => {
+    await frigateApp.page.route(
+      "**/api/*/recordings/main_availability**",
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+        await route
+          .fulfill({ json: { ranges: [], truncated: false } })
+          .catch(() => {});
+      },
+    );
+    const playlist = frigateApp.page.waitForRequest(
+      (request) =>
+        request.url().includes("/vod/") && request.url().endsWith("index.m3u8"),
+    );
+    await openTrackedObjectVideo(frigateApp);
+    const request = await playlist;
+    expect(request.url()).not.toContain("/quality/main/");
+  });
+
+  test("HD playlist failure falls back to SD and clears the spinner on terminal failure", async ({
+    frigateApp,
+  }) => {
+    await frigateApp.page.route(
+      "**/api/*/recordings/main_availability**",
+      (route) =>
+        route.fulfill({
+          json: {
+            ranges: [{ start_time: 0, end_time: 9999999999 }],
+            truncated: false,
+          },
+        }),
+    );
+    const requests: string[] = [];
+    await frigateApp.page.route("**/vod/**", (route) => {
+      requests.push(route.request().url());
+      return route.fulfill({ status: 404, body: "No recordings" });
+    });
+    await openTrackedObjectVideo(frigateApp);
+    await expect
+      .poll(() => requests.some((url) => url.includes("/quality/main/")))
+      .toBe(true);
+    await expect
+      .poll(() => requests.some((url) => !url.includes("/quality/main/")), {
+        timeout: 20000,
+      })
+      .toBe(true);
+    await expect(
+      frigateApp.page.getByText("No recordings found for this time", {
+        exact: true,
+      }),
+    ).toBeVisible({ timeout: 20000 });
+  });
+});
